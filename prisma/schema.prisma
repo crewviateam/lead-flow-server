@@ -1,0 +1,432 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// LEAD MODEL - Core entity for email outreach
+// ============================================
+model Lead {
+  id        Int      @id @default(autoincrement())
+  email     String   @unique
+  name      String
+  country   String
+  city      String
+  timezone  String
+  
+  // Status tracking
+  status      String   @default("pending")
+  queueStatus String   @default("pending") @map("queue_status")
+  
+  // Counters
+  emailsSent    Int @default(0) @map("emails_sent")
+  emailsOpened  Int @default(0) @map("emails_opened")
+  emailsClicked Int @default(0) @map("emails_clicked")
+  emailsBounced Int @default(0) @map("emails_bounced")
+  
+  // Lead Intelligence
+  score Int @default(0)
+  
+  // Followup Controls
+  followupsPaused   Boolean  @default(false) @map("followups_paused")
+  skippedFollowups  String[] @default([]) @map("skipped_followups")
+  
+  // Tags
+  tags String[] @default([])
+  
+  // Freeze state
+  frozenUntil DateTime? @map("frozen_until")
+  
+  // Terminal State Tracking (dead, unsubscribed, complaint)
+  terminalState     String?   @map("terminal_state")      // 'dead' | 'unsubscribed' | 'complaint' | null
+  terminalStateAt   DateTime? @map("terminal_state_at")   // When terminal state was set
+  terminalReason    String?   @map("terminal_reason")     // Reason for terminal state
+  totalRetries      Int       @default(0) @map("total_retries")  // Total retry attempts across all mails
+  
+  // Timestamps
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  
+  // Relations
+  emailJobs     EmailJob[]
+  eventHistory  EventHistory[]
+  manualMails   ManualMail[]
+  emailSchedule EmailSchedule?
+  notifications Notification[]
+  conditionalEmailJobs ConditionalEmailJob[]
+
+  @@index([status])
+  @@index([queueStatus])
+  @@index([score(sort: Desc)])
+  @@index([createdAt])
+  @@index([timezone, status])
+  @@index([terminalState])  // Added: Terminal states page filtering
+  @@map("leads")
+}
+
+// ============================================
+// EMAIL SCHEDULE - Tracks scheduled emails per lead
+// ============================================
+model EmailSchedule {
+  id     Int  @id @default(autoincrement())
+  leadId Int  @unique @map("lead_id")
+  lead   Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  
+  // Initial email tracking
+  initialScheduledFor DateTime? @map("initial_scheduled_for")
+  initialSentAt       DateTime? @map("initial_sent_at")
+  initialStatus       String    @default("pending") @map("initial_status")
+  initialChangedByUser Boolean  @default(false) @map("initial_changed_by_user")
+  
+  // Next scheduled and last sent
+  nextScheduledEmail DateTime? @map("next_scheduled_email")
+  lastEmailSentAt    DateTime? @map("last_email_sent_at")
+  
+  // Followups stored as JSON for flexibility
+  followups Json @default("[]")
+  
+  @@map("email_schedules")
+}
+
+// ============================================
+// MANUAL MAIL - High priority manual emails
+// ============================================
+model ManualMail {
+  id           Int       @id @default(autoincrement())
+  leadId       Int       @map("lead_id")
+  lead         Lead      @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  
+  title        String
+  scheduledFor DateTime  @map("scheduled_for")
+  templateId   Int?      @map("template_id")
+  template     EmailTemplate? @relation(fields: [templateId], references: [id])
+  status       String    @default("pending")
+  emailJobId   Int?      @map("email_job_id")
+  changedByUser Boolean  @default(false) @map("changed_by_user")
+  
+  createdAt DateTime @default(now()) @map("created_at")
+  
+  @@index([leadId])
+  @@index([status])
+  @@map("manual_mails")
+}
+
+// ============================================
+// EMAIL JOB - Individual email send jobs
+// ============================================
+model EmailJob {
+  id           Int      @id @default(autoincrement())
+  leadId       Int      @map("lead_id")
+  lead         Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  email        String
+  type         String   // Specific name like "First Followup", "Initial Email"
+  category     String   @default("followup") // 'initial', 'followup', 'manual', 'conditional' - for efficient queries
+  scheduledFor DateTime @map("scheduled_for")
+  
+  status String @default("pending")
+  
+  // Timestamps for tracking
+  sentAt      DateTime? @map("sent_at")
+  deliveredAt DateTime? @map("delivered_at")
+  openedAt    DateTime? @map("opened_at")
+  clickedAt   DateTime? @map("clicked_at")
+  bouncedAt   DateTime? @map("bounced_at")
+  failedAt    DateTime? @map("failed_at")
+  deferredAt  DateTime? @map("deferred_at")
+  
+  // External references
+  brevoMessageId String? @map("brevo_message_id")
+  idempotencyKey String? @unique @map("idempotency_key")
+  
+  // Retry tracking
+  retryCount Int     @default(0) @map("retry_count")
+  lastError  String? @map("last_error")
+  cancellationReason String? @map("cancellation_reason")
+  
+  // Queue info
+  queueName String @default("emailSendQueue") @map("queue_name")
+  
+  // Template reference
+  templateId Int? @map("template_id")
+  template   EmailTemplate? @relation(fields: [templateId], references: [id])
+  
+  // Condition for conditional sequences (stored as JSON)
+  condition Json?
+  
+  // Metadata (stored as JSON for flexibility)
+  metadata Json @default("{}")
+  
+  // Pause tracking (for QueueWatcher priority management)
+  pausedReason    String?   @map("paused_reason")      // Why job was paused
+  pausedAt        DateTime? @map("paused_at")          // When job was paused
+  pausedByJobType String?   @map("paused_by_job_type") // Higher priority type that caused pause
+  resumedAt       DateTime? @map("resumed_at")         // When job was resumed
+  
+  // Timestamps
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([leadId])
+  @@index([status])
+  @@index([scheduledFor])
+  @@index([status, scheduledFor])
+  @@index([brevoMessageId])
+  @@index([email])
+  @@index([category])                  // Added: Analytics queries by type
+  @@index([category, status])          // Added: Analytics queries combining category and status
+  @@index([leadId, status])            // Added: Find pending jobs for lead
+  @@index([leadId, type, status])      // Added: Duplicate prevention queries
+  @@map("email_jobs")
+}
+
+// ============================================
+// EVENT HISTORY - Detailed event tracking per lead
+// ============================================
+model EventHistory {
+  id         Int      @id @default(autoincrement())
+  leadId     Int      @map("lead_id")
+  lead       Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  
+  event      String
+  timestamp  DateTime @default(now())
+  details    Json?
+  emailType  String?  @map("email_type")
+  emailJobId Int?     @map("email_job_id")
+  
+  @@index([leadId])
+  @@index([event])
+  @@index([timestamp])
+  @@index([leadId, event])  // Added: Event lookups by type for a lead
+  @@map("event_history")
+}
+
+// ============================================
+// EMAIL TEMPLATE - Reusable email templates
+// ============================================
+model EmailTemplate {
+  id        Int      @id @default(autoincrement())
+  name      String
+  subject   String
+  body      String   @db.Text
+  variables String[] @default([])
+  isDefault Boolean  @default(false) @map("is_default")
+  
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  
+  // Relations
+  emailJobs         EmailJob[]
+  manualMails       ManualMail[]
+  conditionalEmails ConditionalEmail[]
+
+  @@map("email_templates")
+}
+
+// ============================================
+// SETTINGS - Singleton configuration
+// ============================================
+model Settings {
+  id String @id @default("global")
+  
+  // Rate Limiting
+  rateLimitEmailsPerWindow Int @default(2) @map("rate_limit_emails_per_window")
+  rateLimitWindowMinutes   Int @default(15) @map("rate_limit_window_minutes")
+  
+  // Business Hours
+  businessHoursStart   Int   @default(8) @map("business_hours_start")
+  businessHoursEnd     Int   @default(22) @map("business_hours_end")
+  weekendDays          Int[] @default([0, 6]) @map("weekend_days")
+  
+  // Smart Send Time (stored as JSON for flexibility)
+  smartSendTime Json @default("{}") @map("smart_send_time")
+  
+  // Followups configuration (stored as JSON)
+  followups Json @default("[]")
+  
+  // Paused dates
+  pausedDates DateTime[] @default([]) @map("paused_dates")
+  
+  // Retry Configuration
+  retryMaxAttempts        Int @default(5) @map("retry_max_attempts")
+  retrySoftBounceDelayHrs Int @default(2) @map("retry_soft_bounce_delay_hrs")
+  
+  // Brevo integration
+  brevoApiKey   String? @map("brevo_api_key")
+  brevoFromEmail String? @map("brevo_from_email")
+  brevoFromName  String? @map("brevo_from_name")
+  
+  // Reporting
+  reportingEnabled    Boolean  @default(false) @map("reporting_enabled")
+  reportingRecipients String[] @default([]) @map("reporting_recipients")
+  reportingDayOfWeek  Int      @default(1) @map("reporting_day_of_week")
+  reportingTime       String   @default("09:00") @map("reporting_time")
+  
+  // Mail Type Priorities (JSON: {initial: 1, followup: 2, manual: 3, conditional: 4})
+  mailTypePriorities Json @default("{\"initial\": 1, \"followup\": 2, \"manual\": 3, \"conditional\": 4}") @map("mail_type_priorities")
+  
+  // Rulebook Configuration (JSON: stores all system rules)
+  rulebook Json? @map("rulebook")
+  
+  updatedAt DateTime @updatedAt @map("updated_at")
+  updatedBy String   @default("system") @map("updated_by")
+
+  @@map("settings")
+}
+
+// ============================================
+// EVENT STORE - Event sourcing pattern
+// ============================================
+model EventStore {
+  id            Int      @id @default(autoincrement())
+  eventType     String   @map("event_type")
+  aggregateId   String   @map("aggregate_id")
+  aggregateType String   @map("aggregate_type")
+  payload       Json
+  metadata      Json     @default("{}")
+  timestamp     DateTime @default(now())
+  version       Int      @default(1)
+
+  @@index([eventType])
+  @@index([aggregateId])
+  @@index([timestamp])
+  @@index([eventType, timestamp])
+  @@map("event_store")
+}
+
+// ============================================
+// PROCESSED EVENT - Deduplication tracking
+// ============================================
+model ProcessedEvent {
+  id             Int      @id @default(autoincrement())
+  messageId      String   @map("message_id")
+  eventType      String   @map("event_type")
+  eventTimestamp DateTime? @map("event_timestamp")
+  processedAt    DateTime @default(now()) @map("processed_at")
+
+  @@unique([messageId, eventType])
+  @@index([messageId])
+  @@index([processedAt])
+  @@map("processed_events")
+}
+
+// ============================================
+// NOTIFICATION - System notifications
+// ============================================
+model Notification {
+  id      Int    @id @default(autoincrement())
+  type    String @default("info")
+  message String
+  details String?
+  read    Boolean @default(false)
+  
+  // Metadata
+  leadId     Int?    @map("lead_id")
+  lead       Lead?   @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  emailJobId Int?    @map("email_job_id")
+  event      String?
+  
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([read])
+  @@index([createdAt])
+  @@map("notifications")
+}
+
+// ============================================
+// CONDITIONAL EMAIL - Event-triggered emails
+// ============================================
+model ConditionalEmail {
+  id          Int      @id @default(autoincrement())
+  name        String   // "Thank You Email", "Clicked Follow-up"
+  description String?
+  
+  // Trigger Configuration
+  triggerEvent  String   @map("trigger_event")   // "opened", "clicked", "delivered"
+  triggerStep   String   @map("trigger_step")    // Which email to watch: "Initial Email", "First Followup"
+  
+  // Schedule Configuration
+  delayHours    Int      @default(0) @map("delay_hours")   // Delay in hours after event before sending
+  templateId    Int?     @map("template_id")
+  template      EmailTemplate? @relation(fields: [templateId], references: [id])
+  
+  // Behavior
+  cancelPending Boolean  @default(true) @map("cancel_pending") // Cancel pending followups when triggered
+  priority      Int      @default(10)   // Higher = more priority
+  enabled       Boolean  @default(true)
+  
+  // Timestamps
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  
+  // Relations
+  jobs ConditionalEmailJob[]
+
+  @@index([triggerEvent])
+  @@index([triggerStep])
+  @@index([enabled])
+  @@map("conditional_emails")
+}
+
+// ============================================
+// CONDITIONAL EMAIL JOB - Triggered email instances
+// ============================================
+model ConditionalEmailJob {
+  id                  Int      @id @default(autoincrement())
+  conditionalEmailId  Int      @map("conditional_email_id")
+  conditionalEmail    ConditionalEmail @relation(fields: [conditionalEmailId], references: [id], onDelete: Cascade)
+  
+  leadId              Int      @map("lead_id")
+  lead                Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  
+  // Status
+  status              String   @default("pending") // pending, queued, sent, cancelled, skipped
+  scheduledFor        DateTime? @map("scheduled_for")
+  sentAt              DateTime? @map("sent_at")
+  
+  // Tracking
+  triggeredByEvent    String?  @map("triggered_by_event")   // The event that triggered this
+  triggeredByJobId    Int?     @map("triggered_by_job_id")  // The email job that triggered this
+  cancelledFollowups  Json?    @map("cancelled_followups")  // Array of cancelled followup job IDs
+  
+  // External references
+  brevoMessageId      String?  @map("brevo_message_id")
+  emailJobId          Int?     @map("email_job_id")         // Link to created EmailJob
+  
+  // Error tracking
+  lastError           String?  @map("last_error")
+  
+  // Timestamps
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+
+  @@unique([conditionalEmailId, leadId])  // One conditional email per lead
+  @@index([leadId])
+  @@index([status])
+  @@index([scheduledFor])
+  @@map("conditional_email_jobs")
+}
+
+// ============================================
+// DEVICE TOKEN - FCM push notification tokens
+// ============================================
+model DeviceToken {
+  id        Int      @id @default(autoincrement())
+  userId    String   @map("user_id")   // User identifier (e.g., 'admin' for single-user)
+  token     String   @unique           // FCM device token
+  platform  String   @default("web")   // 'web', 'android', 'ios'
+  
+  // Timestamps
+  createdAt DateTime @default(now()) @map("created_at")
+  lastUsed  DateTime @default(now()) @map("last_used")
+  
+  @@index([userId])
+  @@map("device_tokens")
+}
+
