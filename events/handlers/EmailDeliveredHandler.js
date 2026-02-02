@@ -41,104 +41,140 @@ EventBus.on('EmailDelivered', async (payload) => {
     }
 
     // IDEMPOTENCY CHECK 2: Is this job already marked as delivered?
-    if (['delivered', 'opened', 'clicked'].includes(job.status)) {
-      console.log(`[DeliveredHandler] Job ${emailJobId} already has status '${job.status}', checking if scheduling needed`);
+    if (["delivered", "opened", "clicked"].includes(job.status)) {
+      console.log(
+        `[DeliveredHandler] Job ${emailJobId} already has status '${job.status}', checking if scheduling needed`,
+      );
+    } else {
+      // Update job status to 'delivered'
+      await prisma.emailJob.update({
+        where: { id: parseInt(emailJobId) },
+        data: {
+          status: "delivered",
+          deliveredAt: new Date(),
+        },
+      });
+      console.log(
+        `[DeliveredHandler] Updated job ${emailJobId} status to 'delivered'`,
+      );
     }
 
     const updatedLead = await StatusUpdateService.updateStatus(
-      job.leadId, 
-      'delivered', 
+      job.leadId,
+      "delivered",
       {
-        brevoMessageId: payload.eventData?.messageId, 
+        brevoMessageId: payload.eventData?.messageId,
         timestamp: new Date(),
-        source: 'EmailDeliveredHandler'
-      }, 
-      emailJobId, 
-      job.type
+        source: "EmailDeliveredHandler",
+      },
+      emailJobId,
+      job.type,
     );
-    
+
     if (!updatedLead) return;
 
-    console.log(`[DeliveredHandler] Processed delivered event for ${updatedLead.email}`);
+    console.log(
+      `[DeliveredHandler] Processed delivered event for ${updatedLead.email}`,
+    );
 
     // Check if manual or conditional mail - resume followups if paused
-    const isManual = job.metadata?.manual === true || 
-                     (job.metadata?.manualTitle && job.metadata.manualTitle.length > 0);
-    const isConditional = job.type?.startsWith('conditional:');
-    
+    const isManual =
+      job.metadata?.manual === true ||
+      (job.metadata?.manualTitle && job.metadata.manualTitle.length > 0);
+    const isConditional = job.type?.startsWith("conditional:");
+
     if ((isManual || isConditional) && updatedLead.followupsPaused) {
-      console.log(`[DeliveredHandler] ${isConditional ? 'Conditional' : 'Manual'} mail delivered. Resuming followups for ${updatedLead.email}`);
-      
+      console.log(
+        `[DeliveredHandler] ${isConditional ? "Conditional" : "Manual"} mail delivered. Resuming followups for ${updatedLead.email}`,
+      );
+
       // 1. Reset followupsPaused flag on lead
       await prisma.lead.update({
         where: { id: updatedLead.id },
-        data: { followupsPaused: false }
+        data: { followupsPaused: false },
       });
-      
+
       // 2. Actually resume the paused jobs - update their status back to pending
       const pausedJobs = await prisma.emailJob.findMany({
         where: {
           leadId: updatedLead.id,
-          status: 'paused',
-          cancellationReason: 'priority_paused'
-        }
+          status: "paused",
+          cancellationReason: "priority_paused",
+        },
       });
-      
+
       if (pausedJobs.length > 0) {
-        console.log(`[DeliveredHandler] Resuming ${pausedJobs.length} paused jobs for lead ${updatedLead.id}`);
-        
+        console.log(
+          `[DeliveredHandler] Resuming ${pausedJobs.length} paused jobs for lead ${updatedLead.id}`,
+        );
+
         for (const pausedJob of pausedJobs) {
           await prisma.emailJob.update({
             where: { id: pausedJob.id },
             data: {
-              status: 'pending',
+              status: "pending",
               cancellationReason: null,
-              lastError: `Auto-resumed after ${isConditional ? 'conditional' : 'manual'} mail delivered`,
-              resumedAt: new Date()
-            }
+              lastError: `Auto-resumed after ${isConditional ? "conditional" : "manual"} mail delivered`,
+              resumedAt: new Date(),
+            },
           });
-          console.log(`[DeliveredHandler] Resumed job ${pausedJob.id} (${pausedJob.type})`);
+          console.log(
+            `[DeliveredHandler] Resumed job ${pausedJob.id} (${pausedJob.type})`,
+          );
         }
-        
+
         // 3. Update emailSchedule followups status from paused to scheduled
         try {
           const leadWithSchedule = await prisma.lead.findUnique({
             where: { id: updatedLead.id },
-            include: { emailSchedule: true }
+            include: { emailSchedule: true },
           });
-          
+
           if (leadWithSchedule?.emailSchedule) {
             let followups = leadWithSchedule.emailSchedule.followups || [];
             if (!Array.isArray(followups)) {
-              try { followups = JSON.parse(followups); } catch (e) { followups = []; }
+              try {
+                followups = JSON.parse(followups);
+              } catch (e) {
+                followups = [];
+              }
             }
-            
+
             // Reset paused followups to scheduled
             let updated = false;
             for (const followup of followups) {
-              if (followup.status === 'paused') {
-                followup.status = 'scheduled';
+              if (followup.status === "paused") {
+                followup.status = "scheduled";
                 updated = true;
               }
             }
-            
+
             if (updated) {
               await prisma.emailSchedule.update({
                 where: { id: leadWithSchedule.emailSchedule.id },
-                data: { followups }
+                data: { followups },
               });
-              console.log(`[DeliveredHandler] Updated emailSchedule followups status for lead ${updatedLead.id}`);
+              console.log(
+                `[DeliveredHandler] Updated emailSchedule followups status for lead ${updatedLead.id}`,
+              );
             }
           }
         } catch (e) {
-          console.error(`[DeliveredHandler] Error updating emailSchedule: ${e.message}`);
+          console.error(
+            `[DeliveredHandler] Error updating emailSchedule: ${e.message}`,
+          );
         }
-        
+
         // 4. Add event history for auto-resume
-        await LeadRepository.addEvent(updatedLead.id, 'resumed', {
-          reason: `Auto-resumed after ${isConditional ? 'conditional' : 'manual'} mail delivered`,
-          resumedJobs: pausedJobs.map(j => ({ id: j.id, type: j.type }))
-        }, 'followups');
+        await LeadRepository.addEvent(
+          updatedLead.id,
+          "resumed",
+          {
+            reason: `Auto-resumed after ${isConditional ? "conditional" : "manual"} mail delivered`,
+            resumedJobs: pausedJobs.map((j) => ({ id: j.id, type: j.type })),
+          },
+          "followups",
+        );
       }
     }
 
@@ -148,12 +184,14 @@ EventBus.on('EmailDelivered', async (payload) => {
       where: {
         leadId: updatedLead.id,
         status: { in: RulebookService.getActiveStatuses() },
-        type: { 
-          not: { in: ['manual', 'Initial Email', 'initial'] },
-          notContains: 'conditional:'
+        type: {
+          notIn: ["manual", "Initial Email", "initial"],
         },
-        createdAt: { gte: new Date(Date.now() - 120000) } // Created in last 2 minutes
-      }
+        NOT: {
+          type: { contains: "conditional:" },
+        },
+        createdAt: { gte: new Date(Date.now() - 120000) }, // Created in last 2 minutes
+      },
     });
 
     if (existingPendingFollowup) {

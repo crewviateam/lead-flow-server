@@ -169,9 +169,9 @@ class ConditionalEmailService {
         leadId: parseInt(leadId),
         email: lead.email,
         type: `conditional:${conditional.name}`,
-        category: 'conditional',
+        category: "conditional",
         scheduledFor: reservation.reservedTime,
-        status: 'scheduled',  // Use 'scheduled' for conditional emails per rulebook
+        status: "pending", // EmailJob status is 'pending' for queue/schedule pages
         templateId: conditional.templateId,
         metadata: {
           conditionalEmailId: conditional.id,
@@ -179,88 +179,113 @@ class ConditionalEmailService {
           triggerEvent: conditional.triggerEvent,
           triggerStep: conditional.triggerStep,
           priority: conditional.priority,
-          timezone: lead.timezone
-        }
-      }
+          timezone: lead.timezone,
+        },
+      },
     });
-    
+
     // Add to BullMQ queue
     try {
-      const { followupQueue } = require('../queues/emailQueues');
-      const delay = Math.max(0, reservation.reservedTime.getTime() - Date.now());
-      
-      await followupQueue.add('sendEmail', {
-        leadId: leadId,
-        emailJobId: emailJob.id,
-        type: emailJob.type
-      }, {
-        delay,
-        jobId: `conditional-${emailJob.id}`,
-        priority: conditional.priority // Higher priority = processed first
-      });
-      
-      console.log(`[ConditionalEmail] Added to queue with delay ${delay}ms, priority ${conditional.priority}`);
-      
+      const { followupQueue } = require("../queues/emailQueues");
+      const delay = Math.max(
+        0,
+        reservation.reservedTime.getTime() - Date.now(),
+      );
+
+      await followupQueue.add(
+        "sendEmail",
+        {
+          leadId: leadId,
+          emailJobId: emailJob.id,
+          type: emailJob.type,
+        },
+        {
+          delay,
+          jobId: `conditional-${emailJob.id}`,
+          priority: conditional.priority, // Higher priority = processed first
+        },
+      );
+
+      console.log(
+        `[ConditionalEmail] Added to queue with delay ${delay}ms, priority ${conditional.priority}`,
+      );
+
       // Update Lead Status using the correct conditional format
       // Format: "condition {triggerEvent}:scheduled"
       try {
         const triggerEvent = conditional.triggerEvent; // 'opened', 'clicked', etc.
-        const conditionalStatus = RulebookService.formatConditionalStatus(triggerEvent, 'scheduled');
-        
+        const conditionalStatus = RulebookService.formatConditionalStatus(
+          triggerEvent,
+          "scheduled",
+        );
+
         // Directly update lead status with correct format
         await prisma.lead.update({
           where: { id: parseInt(leadId) },
-          data: { status: conditionalStatus }
+          data: { status: conditionalStatus },
         });
-        
-        console.log(`[ConditionalEmail] Lead ${leadId} status updated to: ${conditionalStatus}`);
+
+        console.log(
+          `[ConditionalEmail] Lead ${leadId} status updated to: ${conditionalStatus}`,
+        );
 
         // UPDATE EMAIL SCHEDULE (Sequence Progress)
         // Add this conditional email to the followups list so it shows in the UI
         const leadWithSchedule = await prisma.lead.findUnique({
           where: { id: parseInt(leadId) },
-          include: { emailSchedule: true }
+          include: { emailSchedule: true },
         });
 
         if (leadWithSchedule?.emailSchedule) {
           let followups = leadWithSchedule.emailSchedule.followups || [];
           if (!Array.isArray(followups)) {
-            try { followups = JSON.parse(followups); } catch (e) { followups = []; }
+            try {
+              followups = JSON.parse(followups);
+            } catch (e) {
+              followups = [];
+            }
           }
-          
+
           // Remove if exists (re-scheduling)
           const conditionalName = `Conditional: ${conditional.name}`;
-          const existingIdx = followups.findIndex(f => f.name === conditionalName || f.name === emailJob.type);
+          const existingIdx = followups.findIndex(
+            (f) => f.name === conditionalName || f.name === emailJob.type,
+          );
           if (existingIdx > -1) {
             followups.splice(existingIdx, 1);
           }
-          
+
           // Append new entry
           followups.push({
             name: `Conditional: ${conditional.name}`,
             scheduledFor: scheduledFor,
-            status: 'pending',
+            status: "pending",
             order: 999, // High order to put at end, or 0 to put at start? Usually end.
             isConditional: true,
-            jobId: emailJob.id
+            jobId: emailJob.id,
           });
-          
+
           await prisma.emailSchedule.update({
             where: { id: leadWithSchedule.emailSchedule.id },
-            data: { 
+            data: {
               followups,
-              nextScheduledEmail: scheduledFor < (leadWithSchedule.emailSchedule.nextScheduledEmail || new Date('2099-01-01')) 
-                ? scheduledFor 
-                : leadWithSchedule.emailSchedule.nextScheduledEmail
-            }
+              nextScheduledEmail:
+                scheduledFor <
+                (leadWithSchedule.emailSchedule.nextScheduledEmail ||
+                  new Date("2099-01-01"))
+                  ? scheduledFor
+                  : leadWithSchedule.emailSchedule.nextScheduledEmail,
+            },
           });
-          console.log(`[ConditionalEmail] Added to Sequence Progress: ${conditionalName}`);
+          console.log(
+            `[ConditionalEmail] Added to Sequence Progress: ${conditionalName}`,
+          );
         }
-
       } catch (statusErr) {
-        console.error(`[ConditionalEmail] Failed to update lead status/schedule: ${statusErr.message}`);
+        console.error(
+          `[ConditionalEmail] Failed to update lead status/schedule: ${statusErr.message}`,
+        );
       }
-      
     } catch (error) {
       console.error(`[ConditionalEmail] Error adding to queue:`, error.message);
     }

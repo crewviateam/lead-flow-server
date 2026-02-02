@@ -2198,20 +2198,20 @@ class RulebookService {
    * @returns {Promise<boolean>} True if should mark as dead
    */
   async shouldMarkAsDead(job, eventType) {
-    const category = this.getEventCategory(eventType);
-    const deadRules = this.getDeadMailRules();
+    // Terminal failure events that should trigger dead mail check
+    const terminalFailureEvents = ['hard_bounce', 'blocked', 'invalid', 'error', 'complaint', 'unsubscribed'];
     
-    // Only apply to configured categories
-    if (!deadRules.triggerConditions.applyToCategories.includes(category.name)) {
+    // Only check for terminal failure events
+    if (!terminalFailureEvents.includes(eventType.toLowerCase())) {
       return false;
     }
     
     // Check if max retries exceeded
-    if (deadRules.triggerConditions.maxRetriesExceeded) {
-      return await this.hasExceededRetryLimit(job);
-    }
-    
-    return false;
+    const exceeded = await this.hasExceededRetryLimit(job);
+    console.log(
+      `[RulebookService] Dead mail check for job ${job.id}: eventType=${eventType}, retryCount=${job.retryCount || 0}, exceeded=${exceeded}`,
+    );
+    return exceeded;
   }
   
   /**

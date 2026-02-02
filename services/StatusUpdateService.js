@@ -224,11 +224,20 @@ class StatusUpdateService {
       
       // For conditional emails, use proper format: 'condition {trigger}:{status}'
       // Job type is 'conditional:Name' but lead status should be 'condition {trigger}:scheduled'
-      if (pendingJob.type.startsWith('conditional: ') && pendingJob.metadata?.triggerEvent) {
-        finalStatus = RulebookService.formatConditionalStatus(pendingJob.metadata.triggerEvent, statusWord);
+      if (
+        pendingJob.type.startsWith("conditional:") &&
+        pendingJob.metadata?.triggerEvent
+      ) {
+        finalStatus = RulebookService.formatConditionalStatus(
+          pendingJob.metadata.triggerEvent,
+          statusWord,
+        );
       } else {
         // Use RulebookService for simplified type names
-        let displayType = RulebookService.getSimplifiedTypeName(pendingJob.type, pendingJob.metadata);
+        let displayType = RulebookService.getSimplifiedTypeName(
+          pendingJob.type,
+          pendingJob.metadata,
+        );
         finalStatus = `${displayType}:${statusWord}`;
       }
       console.log(`[StatusUpdateService] Found pending job: ${pendingJob.type}, setting status: ${finalStatus}`);

@@ -10,7 +10,7 @@
  * - CANCELLED: Permanent failure/manual action (Retry button, increments retry count)
  */
 
-const prisma = require('../prisma');
+const { prisma } = require("../lib/prisma");
 const RulebookService = require('./RulebookService');
 
 class QueueWatcherService {

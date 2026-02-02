@@ -280,26 +280,50 @@ class UniqueJourneyService {
    */
   async markSendAttempt(emailJobId) {
     try {
-      // Use atomic update with conditional check
+      // First fetch the current job to get existing metadata
+      const currentJob = await prisma.emailJob.findUnique({
+        where: { id: parseInt(emailJobId) },
+        select: { metadata: true, status: true },
+      });
+
+      if (!currentJob) {
+        console.log(`[UniqueJourney] Job ${emailJobId} not found`);
+        return false;
+      }
+
+      // If already in a processed status, skip
+      if (!RulebookService.getActiveStatuses().includes(currentJob.status)) {
+        console.log(
+          `[UniqueJourney] Job ${emailJobId} already has status '${currentJob.status}', skipping`,
+        );
+        return false;
+      }
+
+      // Use atomic update with conditional check - CRITICAL for preventing race conditions
+      // The WHERE clause ensures only one worker can successfully update the status
       const result = await prisma.emailJob.updateMany({
         where: {
           id: parseInt(emailJobId),
-          status: { in: RulebookService.getActiveStatuses() }
+          status: { in: RulebookService.getActiveStatuses() },
         },
         data: {
-          status: 'sending',
+          status: "sending",
           metadata: {
-            sendAttemptedAt: new Date().toISOString()
-          }
-        }
+            ...(currentJob.metadata || {}),
+            sendAttemptedAt: new Date().toISOString(),
+          },
+        },
       });
-      
-      // If count is 0, job was already processed
+
+      // If count is 0, another worker already claimed this job
       if (result.count === 0) {
-        console.log(`[UniqueJourney] Job ${emailJobId} already being processed or processed`);
+        console.log(
+          `[UniqueJourney] Job ${emailJobId} already being processed by another worker`,
+        );
         return false;
       }
-      
+
+      console.log(`[UniqueJourney] Marked job ${emailJobId} as sending`);
       return true;
     } catch (error) {
       console.error(`[UniqueJourney] Error marking send attempt for job ${emailJobId}:`, error);

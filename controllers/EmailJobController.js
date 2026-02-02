@@ -159,22 +159,80 @@ class EmailJobController {
       // Check if retry would exceed max retry limit
       const maxRetries = await RulebookService.getMaxRetries(oldJob.type);
       if (newRetryCount > maxRetries) {
-        // Mark lead as dead instead of retrying
+        console.log(
+          `[RetryJob] Max retries exceeded (${newRetryCount}/${maxRetries}), marking lead ${lead.id} as dead`,
+        );
+
+        // Mark lead as dead
         await prisma.lead.update({
           where: { id: lead.id },
           data: {
-            status: 'dead',
-            terminalState: 'dead',
+            status: "dead",
+            terminalState: "dead",
             terminalStateAt: new Date(),
-            terminalReason: `Manual retry blocked: would exceed max retries (${newRetryCount}/${maxRetries})`,
-            totalRetries: newRetryCount
-          }
+            terminalReason: `Manual retry blocked: max retries exceeded (${newRetryCount}/${maxRetries})`,
+            totalRetries: newRetryCount,
+          },
         });
-        
-        return res.status(400).json({ 
-          error: `Cannot retry: would exceed max retries (${newRetryCount}/${maxRetries}). Lead marked as dead.`,
+
+        // Cancel ALL pending/active jobs for this lead
+        const activeStatuses = RulebookService.getActiveStatuses();
+        const cancelledJobs = await prisma.emailJob.updateMany({
+          where: {
+            leadId: lead.id,
+            status: { in: [...activeStatuses, "paused"] },
+          },
+          data: {
+            status: "cancelled",
+            lastError: "Lead marked as dead - max retries exceeded",
+          },
+        });
+        console.log(
+          `[RetryJob] Cancelled ${cancelledJobs.count} pending jobs for dead lead`,
+        );
+
+        // Mark the original job as dead too
+        await prisma.emailJob.update({
+          where: { id: parseInt(id) },
+          data: {
+            status: "dead",
+            lastError: `Max retries exceeded (${newRetryCount}/${maxRetries})`,
+          },
+        });
+
+        // Create notification
+        await prisma.notification.create({
+          data: {
+            type: "warning",
+            message: `Lead ${lead.name || lead.email} marked as dead`,
+            details: `Manual retry blocked: max retries exceeded (${newRetryCount}/${maxRetries}). All pending emails cancelled.`,
+            leadId: lead.id,
+            emailJobId: parseInt(id),
+            event: "dead",
+          },
+        });
+
+        // Add event history
+        await LeadRepository.addEvent(
+          lead.id,
+          "dead",
+          {
+            reason: `Manual retry blocked: max retries exceeded (${newRetryCount}/${maxRetries})`,
+            jobId: oldJob.id,
+            cancelledJobs: cancelledJobs.count,
+          },
+          oldJob.type,
+          oldJob.id,
+        );
+
+        // Return success response (not error) since we handled the situation
+        return res.status(200).json({
+          success: true,
+          markedAsDead: true,
+          message: `Lead marked as dead - max retries exceeded (${newRetryCount}/${maxRetries}). All pending emails cancelled.`,
           maxRetries,
-          currentRetries: newRetryCount
+          currentRetries: newRetryCount,
+          cancelledJobs: cancelledJobs.count,
         });
       }
       

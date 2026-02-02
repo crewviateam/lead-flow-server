@@ -28,7 +28,10 @@ EventBus.on('EmailOpened', async (payload) => {
     // Update the EMAIL JOB status to 'opened' (not the lead status directly)
     await prisma.emailJob.update({
       where: { id: emailJobId },
-      data: { status: 'opened' }
+      data: {
+        status: "opened",
+        openedAt: new Date(),
+      },
     });
     
     // Increment opened counter on lead

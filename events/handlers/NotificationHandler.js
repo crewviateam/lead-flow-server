@@ -129,14 +129,19 @@ class NotificationHandler {
     
     // Also check DB for recent duplicates (belt and suspenders)
     try {
+      // Parse leadId as integer since Notification model expects Int
+      const leadIdInt = data.metadata?.leadId
+        ? parseInt(data.metadata.leadId)
+        : null;
+
       const existing = await prisma.notification.findFirst({
         where: {
           event: data.metadata?.event,
-          leadId: data.metadata?.leadId || null,
-          createdAt: { gte: new Date(Date.now() - 300000) } // Last 5 min
-        }
+          leadId: leadIdInt,
+          createdAt: { gte: new Date(Date.now() - 300000) }, // Last 5 min
+        },
       });
-      
+
       if (existing) {
         console.log(`[NotificationHandler] DB duplicate found, skipping`);
         return;
