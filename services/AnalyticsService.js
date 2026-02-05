@@ -47,7 +47,8 @@ class AnalyticsService {
           clicked_at,
           bounced_at,
           failed_at,
-          deferred_at
+          deferred_at,
+          metadata
         FROM email_jobs
         WHERE sent_at >= ${startDate} AND sent_at <= ${endDate}
           AND status != 'rescheduled'
@@ -65,93 +66,187 @@ class AnalyticsService {
           sent_at DESC
       )
       SELECT 
-        -- Total unique journeys
-        COUNT(*) as total_sent,
-        COUNT(*) FILTER (WHERE delivered_at IS NOT NULL) as total_delivered,
+        -- TOTAL SENT: All emails that were sent (sent_at IS NOT NULL already filtered above)
+        COUNT(*) as total_all,
+        
+        -- DELIVERED: Emails successfully delivered (status indicates success or has delivered_at)
+        -- These are mutually exclusive from failed
+        COUNT(*) FILTER (WHERE delivered_at IS NOT NULL AND status NOT IN ('hard_bounce', 'blocked', 'spam', 'error', 'invalid', 'unsubscribed', 'complaint', 'dead')) as total_delivered,
         COUNT(*) FILTER (WHERE opened_at IS NOT NULL) as total_opened,
         COUNT(*) FILTER (WHERE clicked_at IS NOT NULL) as total_clicked,
-        COUNT(*) FILTER (WHERE bounced_at IS NOT NULL) as total_bounced,
-        COUNT(*) FILTER (WHERE failed_at IS NOT NULL) as total_failed,
-        COUNT(*) FILTER (WHERE status IN ('soft_bounce', 'deferred')) as total_rescheduled,
-        COUNT(*) FILTER (WHERE status = 'soft_bounce') as soft_bounce,
-        COUNT(*) FILTER (WHERE status = 'deferred') as deferred,
+        
+        -- FAILED: Emails that failed delivery (hard_bounce, blocked, spam, error, invalid)
+        -- Mutually exclusive from delivered
+        COUNT(*) FILTER (WHERE status IN ('hard_bounce', 'blocked', 'spam', 'error', 'invalid')) as total_failed,
         COUNT(*) FILTER (WHERE status = 'hard_bounce') as hard_bounce,
         COUNT(*) FILTER (WHERE status = 'blocked') as blocked,
         COUNT(*) FILTER (WHERE status = 'spam') as spam,
-        COUNT(*) FILTER (WHERE status IN ('pending', 'queued')) as pending,
+        COUNT(*) FILTER (WHERE status = 'error') as error,
+        COUNT(*) FILTER (WHERE status = 'invalid') as invalid,
+        
+        -- TERMINAL STATES: Lead is dead/unsubscribed/complaint (shown separately)
+        COUNT(*) FILTER (WHERE status IN ('unsubscribed', 'complaint', 'dead')) as total_terminal,
+        COUNT(*) FILTER (WHERE status = 'unsubscribed') as unsubscribed,
+        COUNT(*) FILTER (WHERE status = 'complaint') as complaint,
+        COUNT(*) FILTER (WHERE status = 'dead') as dead,
+        
+        -- RESCHEDULED: Emails pending retry (soft_bounce, deferred)
+        COUNT(*) FILTER (WHERE status IN ('soft_bounce', 'deferred')) as total_rescheduled,
+        COUNT(*) FILTER (WHERE status = 'soft_bounce') as soft_bounce,
+        COUNT(*) FILTER (WHERE status = 'deferred') as deferred,
+        
+        -- BOUNCED (for rate calculation)
+        COUNT(*) FILTER (WHERE bounced_at IS NOT NULL) as total_bounced,
+        
+        -- NOTE: pending count comes from separate query below (not from sent jobs)
+        0 as pending,
         
         -- By category (using indexed column for fast queries!)
-        -- Initial emails
-        COUNT(*) FILTER (WHERE category = 'initial') as initial_sent,
+        -- Initial emails (EXCLUDE terminal states from sent)
+        COUNT(*) FILTER (WHERE category = 'initial' AND status NOT IN ('unsubscribed', 'complaint', 'dead', 'cancelled', 'skipped')) as initial_sent,
         COUNT(*) FILTER (WHERE category = 'initial' AND delivered_at IS NOT NULL) as initial_delivered,
         COUNT(*) FILTER (WHERE category = 'initial' AND opened_at IS NOT NULL) as initial_opened,
         COUNT(*) FILTER (WHERE category = 'initial' AND clicked_at IS NOT NULL) as initial_clicked,
-        COUNT(*) FILTER (WHERE category = 'initial' AND status IN ('soft_bounce', 'deferred')) as initial_rescheduled,
+        COUNT(*) FILTER (WHERE category = 'initial' AND ((metadata->>'rescheduled')::boolean = true OR metadata->>'retryReason' IS NOT NULL)) as initial_rescheduled,
         COUNT(*) FILTER (WHERE category = 'initial' AND failed_at IS NOT NULL) as initial_failed,
         COUNT(*) FILTER (WHERE category = 'initial' AND status = 'soft_bounce') as initial_soft_bounce,
         COUNT(*) FILTER (WHERE category = 'initial' AND status = 'hard_bounce') as initial_hard_bounce,
         COUNT(*) FILTER (WHERE category = 'initial' AND status = 'blocked') as initial_blocked,
+        COUNT(*) FILTER (WHERE category = 'initial' AND status = 'deferred') as initial_deferred,
+        COUNT(*) FILTER (WHERE category = 'initial' AND status = 'spam') as initial_spam,
+        COUNT(*) FILTER (WHERE category = 'initial' AND status = 'error') as initial_error,
+        COUNT(*) FILTER (WHERE category = 'initial' AND status = 'invalid') as initial_invalid,
+        COUNT(*) FILTER (WHERE category = 'initial' AND status = 'unsubscribed') as initial_unsubscribed,
+        COUNT(*) FILTER (WHERE category = 'initial' AND status = 'complaint') as initial_complaint,
+        COUNT(*) FILTER (WHERE category = 'initial' AND status = 'dead') as initial_dead,
         
-        -- Followup emails (simple category check instead of complex NOT conditions)
-        COUNT(*) FILTER (WHERE category = 'followup') as followup_sent,
+        -- Followup emails (EXCLUDE terminal states from sent)
+        COUNT(*) FILTER (WHERE category = 'followup' AND status NOT IN ('unsubscribed', 'complaint', 'dead', 'cancelled', 'skipped')) as followup_sent,
         COUNT(*) FILTER (WHERE category = 'followup' AND delivered_at IS NOT NULL) as followup_delivered,
         COUNT(*) FILTER (WHERE category = 'followup' AND opened_at IS NOT NULL) as followup_opened,
         COUNT(*) FILTER (WHERE category = 'followup' AND clicked_at IS NOT NULL) as followup_clicked,
-        COUNT(*) FILTER (WHERE category = 'followup' AND status IN ('soft_bounce', 'deferred')) as followup_rescheduled,
+        COUNT(*) FILTER (WHERE category = 'followup' AND ((metadata->>'rescheduled')::boolean = true OR metadata->>'retryReason' IS NOT NULL)) as followup_rescheduled,
         COUNT(*) FILTER (WHERE category = 'followup' AND failed_at IS NOT NULL) as followup_failed,
         COUNT(*) FILTER (WHERE category = 'followup' AND status = 'soft_bounce') as followup_soft_bounce,
         COUNT(*) FILTER (WHERE category = 'followup' AND status = 'hard_bounce') as followup_hard_bounce,
         COUNT(*) FILTER (WHERE category = 'followup' AND status = 'blocked') as followup_blocked,
+        COUNT(*) FILTER (WHERE category = 'followup' AND status = 'deferred') as followup_deferred,
+        COUNT(*) FILTER (WHERE category = 'followup' AND status = 'spam') as followup_spam,
+        COUNT(*) FILTER (WHERE category = 'followup' AND status = 'error') as followup_error,
+        COUNT(*) FILTER (WHERE category = 'followup' AND status = 'invalid') as followup_invalid,
+        COUNT(*) FILTER (WHERE category = 'followup' AND status = 'unsubscribed') as followup_unsubscribed,
+        COUNT(*) FILTER (WHERE category = 'followup' AND status = 'complaint') as followup_complaint,
+        COUNT(*) FILTER (WHERE category = 'followup' AND status = 'dead') as followup_dead,
         
-        -- Manual emails
-        COUNT(*) FILTER (WHERE category = 'manual') as manual_sent,
+        -- Manual emails (EXCLUDE terminal states from sent)
+        COUNT(*) FILTER (WHERE category = 'manual' AND status NOT IN ('unsubscribed', 'complaint', 'dead', 'cancelled', 'skipped')) as manual_sent,
         COUNT(*) FILTER (WHERE category = 'manual' AND delivered_at IS NOT NULL) as manual_delivered,
         COUNT(*) FILTER (WHERE category = 'manual' AND opened_at IS NOT NULL) as manual_opened,
         COUNT(*) FILTER (WHERE category = 'manual' AND clicked_at IS NOT NULL) as manual_clicked,
-        COUNT(*) FILTER (WHERE category = 'manual' AND status IN ('soft_bounce', 'deferred')) as manual_rescheduled,
+        COUNT(*) FILTER (WHERE category = 'manual' AND ((metadata->>'rescheduled')::boolean = true OR metadata->>'retryReason' IS NOT NULL)) as manual_rescheduled,
         COUNT(*) FILTER (WHERE category = 'manual' AND failed_at IS NOT NULL) as manual_failed,
         COUNT(*) FILTER (WHERE category = 'manual' AND status = 'soft_bounce') as manual_soft_bounce,
         COUNT(*) FILTER (WHERE category = 'manual' AND status = 'hard_bounce') as manual_hard_bounce,
         COUNT(*) FILTER (WHERE category = 'manual' AND status = 'blocked') as manual_blocked,
+        COUNT(*) FILTER (WHERE category = 'manual' AND status = 'deferred') as manual_deferred,
+        COUNT(*) FILTER (WHERE category = 'manual' AND status = 'spam') as manual_spam,
+        COUNT(*) FILTER (WHERE category = 'manual' AND status = 'error') as manual_error,
+        COUNT(*) FILTER (WHERE category = 'manual' AND status = 'invalid') as manual_invalid,
+        COUNT(*) FILTER (WHERE category = 'manual' AND status = 'unsubscribed') as manual_unsubscribed,
+        COUNT(*) FILTER (WHERE category = 'manual' AND status = 'complaint') as manual_complaint,
+        COUNT(*) FILTER (WHERE category = 'manual' AND status = 'dead') as manual_dead,
         
-        -- Conditional emails
-        COUNT(*) FILTER (WHERE category = 'conditional') as conditional_sent,
+        -- Conditional emails (EXCLUDE terminal states from sent)
+        COUNT(*) FILTER (WHERE category = 'conditional' AND status NOT IN ('unsubscribed', 'complaint', 'dead', 'cancelled', 'skipped')) as conditional_sent,
         COUNT(*) FILTER (WHERE category = 'conditional' AND delivered_at IS NOT NULL) as conditional_delivered,
         COUNT(*) FILTER (WHERE category = 'conditional' AND opened_at IS NOT NULL) as conditional_opened,
         COUNT(*) FILTER (WHERE category = 'conditional' AND clicked_at IS NOT NULL) as conditional_clicked,
-        COUNT(*) FILTER (WHERE category = 'conditional' AND status IN ('soft_bounce', 'deferred')) as conditional_rescheduled,
+        COUNT(*) FILTER (WHERE category = 'conditional' AND ((metadata->>'rescheduled')::boolean = true OR metadata->>'retryReason' IS NOT NULL)) as conditional_rescheduled,
         COUNT(*) FILTER (WHERE category = 'conditional' AND failed_at IS NOT NULL) as conditional_failed,
         COUNT(*) FILTER (WHERE category = 'conditional' AND status = 'soft_bounce') as conditional_soft_bounce,
         COUNT(*) FILTER (WHERE category = 'conditional' AND status = 'hard_bounce') as conditional_hard_bounce,
-        COUNT(*) FILTER (WHERE category = 'conditional' AND status = 'blocked') as conditional_blocked
+        COUNT(*) FILTER (WHERE category = 'conditional' AND status = 'blocked') as conditional_blocked,
+        COUNT(*) FILTER (WHERE category = 'conditional' AND status = 'deferred') as conditional_deferred,
+        COUNT(*) FILTER (WHERE category = 'conditional' AND status = 'spam') as conditional_spam,
+        COUNT(*) FILTER (WHERE category = 'conditional' AND status = 'error') as conditional_error,
+        COUNT(*) FILTER (WHERE category = 'conditional' AND status = 'invalid') as conditional_invalid,
+        COUNT(*) FILTER (WHERE category = 'conditional' AND status = 'unsubscribed') as conditional_unsubscribed,
+        COUNT(*) FILTER (WHERE category = 'conditional' AND status = 'complaint') as conditional_complaint,
+        COUNT(*) FILTER (WHERE category = 'conditional' AND status = 'dead') as conditional_dead
       FROM unique_journeys
     `;
 
+    // SEPARATE QUERY FOR PENDING JOBS (not yet sent)
+    // NOTE: Pending jobs are scheduled for the FUTURE, so we do NOT filter by date
+    // This shows ALL pending jobs regardless of the selected date range
+    // Uses COALESCE to check category field first, then fallback to type field parsing
+    const pendingResult = await prisma.$queryRaw`
+      SELECT 
+        COUNT(*) as total_pending,
+        COUNT(*) FILTER (WHERE 
+          category = 'initial' OR 
+          (category IS NULL AND LOWER(type) LIKE '%initial%')
+        ) as initial_pending,
+        COUNT(*) FILTER (WHERE 
+          category = 'followup' OR 
+          (category IS NULL AND LOWER(type) LIKE '%followup%' AND LOWER(type) NOT LIKE '%initial%' AND LOWER(type) NOT LIKE 'conditional%')
+        ) as followup_pending,
+        COUNT(*) FILTER (WHERE 
+          category = 'manual' OR 
+          (category IS NULL AND LOWER(type) LIKE '%manual%')
+        ) as manual_pending,
+        COUNT(*) FILTER (WHERE 
+          category = 'conditional' OR 
+          (category IS NULL AND LOWER(type) LIKE 'conditional%')
+        ) as conditional_pending
+      FROM email_jobs
+      WHERE status IN ('pending', 'queued', 'scheduled')
+        AND sent_at IS NULL
+    `;
+    console.log("result", result[0]);
+
     const r = result[0] || {};
+    const p = pendingResult[0] || {};
     const toNum = (v) => Number(v) || 0;
 
     // Calculate rates - OPEN RATE IS FROM DELIVERED, NOT SENT
-    const sent = toNum(r.total_sent);
+    const sent = toNum(r.total_all); // All emails that were sent
     const delivered = toNum(r.total_delivered);
     const opened = toNum(r.total_opened);
     const clicked = toNum(r.total_clicked);
     const bounced = toNum(r.total_bounced);
+    const pending = toNum(p.total_pending);
+    const rescheduled = toNum(r.total_rescheduled);
+    const failed = toNum(r.total_failed);
+    const terminal = toNum(r.total_terminal);
 
     const analyticsResult = {
       totals: {
+        // SENT: All emails that were attempted
         sent,
+        // DELIVERED: Successfully delivered (mutually exclusive from failed/terminal/rescheduled)
         delivered,
         opened,
         clicked,
         bounced,
-        failed: toNum(r.total_failed),
-        rescheduled: toNum(r.total_rescheduled),
-        softBounce: toNum(r.soft_bounce),
-        deferred: toNum(r.deferred),
+        // FAILED: Delivery failed (hard_bounce, blocked, spam, error, invalid)
+        failed,
         hardBounce: toNum(r.hard_bounce),
         blocked: toNum(r.blocked),
         spam: toNum(r.spam),
-        pending: toNum(r.pending),
+        error: toNum(r.error),
+        invalid: toNum(r.invalid),
+        // RESCHEDULED: Pending retry (soft_bounce, deferred)
+        rescheduled,
+        softBounce: toNum(r.soft_bounce),
+        deferred: toNum(r.deferred),
+        // PENDING: Not yet sent
+        pending,
+        // TERMINAL: Lead marked as terminal (unsubscribed, complaint, dead)
+        terminal,
+        unsubscribed: toNum(r.unsubscribed),
+        complaint: toNum(r.complaint),
+        dead: toNum(r.dead),
       },
       byType: {
         Initial: {
@@ -164,6 +259,14 @@ class AnalyticsService {
           softBounce: toNum(r.initial_soft_bounce),
           hardBounce: toNum(r.initial_hard_bounce),
           blocked: toNum(r.initial_blocked),
+          deferred: toNum(r.initial_deferred),
+          spam: toNum(r.initial_spam),
+          error: toNum(r.initial_error),
+          invalid: toNum(r.initial_invalid),
+          unsubscribed: toNum(r.initial_unsubscribed),
+          complaint: toNum(r.initial_complaint),
+          dead: toNum(r.initial_dead),
+          pending: toNum(p.initial_pending),
         },
         Followup: {
           sent: toNum(r.followup_sent),
@@ -175,6 +278,14 @@ class AnalyticsService {
           softBounce: toNum(r.followup_soft_bounce),
           hardBounce: toNum(r.followup_hard_bounce),
           blocked: toNum(r.followup_blocked),
+          deferred: toNum(r.followup_deferred),
+          spam: toNum(r.followup_spam),
+          error: toNum(r.followup_error),
+          invalid: toNum(r.followup_invalid),
+          unsubscribed: toNum(r.followup_unsubscribed),
+          complaint: toNum(r.followup_complaint),
+          dead: toNum(r.followup_dead),
+          pending: toNum(p.followup_pending),
         },
         Manual: {
           sent: toNum(r.manual_sent),
@@ -186,6 +297,14 @@ class AnalyticsService {
           softBounce: toNum(r.manual_soft_bounce),
           hardBounce: toNum(r.manual_hard_bounce),
           blocked: toNum(r.manual_blocked),
+          deferred: toNum(r.manual_deferred),
+          spam: toNum(r.manual_spam),
+          error: toNum(r.manual_error),
+          invalid: toNum(r.manual_invalid),
+          unsubscribed: toNum(r.manual_unsubscribed),
+          complaint: toNum(r.manual_complaint),
+          dead: toNum(r.manual_dead),
+          pending: toNum(p.manual_pending),
         },
         Conditional: {
           sent: toNum(r.conditional_sent),
@@ -197,6 +316,14 @@ class AnalyticsService {
           softBounce: toNum(r.conditional_soft_bounce),
           hardBounce: toNum(r.conditional_hard_bounce),
           blocked: toNum(r.conditional_blocked),
+          deferred: toNum(r.conditional_deferred),
+          spam: toNum(r.conditional_spam),
+          error: toNum(r.conditional_error),
+          invalid: toNum(r.conditional_invalid),
+          unsubscribed: toNum(r.conditional_unsubscribed),
+          complaint: toNum(r.conditional_complaint),
+          dead: toNum(r.conditional_dead),
+          pending: toNum(p.conditional_pending),
         },
       },
       rates: {
@@ -360,7 +487,8 @@ class AnalyticsService {
         updateData.sentAt = eventDate;
       }
 
-      // AUTO-RESCHEDULE LOGIC: For soft_bounce and deferred
+      // AUTO-RESCHEDULE LOGIC: For soft_bounce and deferred - mark metadata
+      // The actual EmailBounced event will be emitted by the dynamic routing at line ~671
       if (["soft_bounce", "deferred"].includes(eventType)) {
         const currentMetadata = emailJob.metadata || {};
         updateData.metadata = { ...currentMetadata, rescheduled: true };
@@ -398,6 +526,59 @@ class AnalyticsService {
               where: { id: lead.emailSchedule.id },
               data: { initialStatus: eventType },
             });
+          } else if (emailJob.type?.startsWith("conditional:")) {
+            // Update ConditionalEmailJob status when events occur
+            // ConditionalEmailJob is linked by emailJobId
+            const condUpdateResult =
+              await prisma.conditionalEmailJob.updateMany({
+                where: { emailJobId: emailJob.id },
+                data: {
+                  status: eventType === "delivered" ? "completed" : eventType,
+                },
+              });
+
+            if (condUpdateResult.count > 0) {
+              console.log(
+                `[AnalyticsService] Updated ConditionalEmailJob status to ${eventType} for emailJobId ${emailJob.id}`,
+              );
+            } else {
+              // Try fallback by metadata
+              if (emailJob.metadata?.conditionalJobId) {
+                await prisma.conditionalEmailJob.update({
+                  where: { id: emailJob.metadata.conditionalJobId },
+                  data: {
+                    status: eventType === "delivered" ? "completed" : eventType,
+                  },
+                });
+                console.log(
+                  `[AnalyticsService] Fallback: Updated ConditionalEmailJob ${emailJob.metadata.conditionalJobId} to ${eventType}`,
+                );
+              }
+            }
+
+            // Also update followups JSON entry for conditional emails
+            let followups = lead.emailSchedule.followups || [];
+            if (!Array.isArray(followups)) {
+              try {
+                followups = JSON.parse(followups);
+              } catch (e) {
+                followups = [];
+              }
+            }
+
+            const condFollowupIndex = followups.findIndex(
+              (f) =>
+                f.name === emailJob.type ||
+                f.name ===
+                  `Conditional: ${emailJob.type.replace("conditional:", "")}`,
+            );
+            if (condFollowupIndex >= 0) {
+              followups[condFollowupIndex].status = eventType;
+              await prisma.emailSchedule.update({
+                where: { id: lead.emailSchedule.id },
+                data: { followups },
+              });
+            }
           } else if (emailJob.type === "manual" || emailJob.metadata?.manual) {
             // Update ManualMail status using Prisma model (not JSON)
             // ManualMail is a separate table linked by emailJobId
@@ -570,8 +751,10 @@ class AnalyticsService {
     // Route events to correct handlers based on RulebookService event categories
     let handlerName = `Email${eventType.charAt(0).toUpperCase() + eventType.slice(1)}`;
     
-    // Bounce events go to EmailBounced
+    // Bounce events go to EmailBounced (soft_bounce and hard_bounce)
+    // IMPORTANT: deferred has its own handler EmailDeferred for auto-reschedule
     if (eventType.includes("bounce")) handlerName = "EmailBounced";
+    if (eventType === "deferred") handlerName = "EmailDeferred";
     
     // Complaint/Unsubscribed get their own dedicated handlers
     if (eventType === "complaint") handlerName = "EmailComplaint";

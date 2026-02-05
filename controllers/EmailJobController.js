@@ -69,7 +69,7 @@ class EmailJobController {
         const displayType = RulebookService.getDisplayTypeName(job);
         // Use async version for conditional emails to lookup triggerEvent if missing
         const displayStatus = await RulebookService.formatJobStatusForDisplayAsync(job);
-        console.log("displayStatus==============", displayStatus);
+        // console.log("displayStatus==============", displayStatus);
         
         return {
           ...job,
@@ -126,10 +126,10 @@ class EmailJobController {
   async retryJob(req, res) {
     try {
       const { id } = req.params;
-      
+
       const oldJob = await EmailJobRepository.findById(parseInt(id));
       if (!oldJob) {
-        return res.status(404).json({ error: 'Email job not found' });
+        return res.status(404).json({ error: "Email job not found" });
       }
 
       // Allow retry for all terminal failure states
@@ -137,25 +137,29 @@ class EmailJobController {
       const retriableStatuses = RulebookService.getRetriableStatuses();
       if (!retriableStatuses.includes(oldJob.status)) {
         // Special check for paused - suggest using resume instead
-        if (oldJob.status === 'paused') {
-          return res.status(400).json({ 
+        if (oldJob.status === "paused") {
+          return res.status(400).json({
             error: `Paused jobs should be resumed, not retried. Use the Resume action instead.`,
-            code: 'USE_RESUME_INSTEAD',
-            suggestResume: true
+            code: "USE_RESUME_INSTEAD",
+            suggestResume: true,
           });
         }
-        return res.status(400).json({ error: `Job status '${oldJob.status}' is not retriable. Allowed: ${retriableStatuses.join(', ')}` });
+        return res
+          .status(400)
+          .json({
+            error: `Job status '${oldJob.status}' is not retriable. Allowed: ${retriableStatuses.join(", ")}`,
+          });
       }
 
       // Get lead info
       const lead = await LeadRepository.findById(oldJob.leadId);
       if (!lead) {
-        return res.status(404).json({ error: 'Lead not found' });
+        return res.status(404).json({ error: "Lead not found" });
       }
-      
+
       // Calculate new retry count BEFORE checking limits
       const newRetryCount = (oldJob.retryCount || 0) + 1;
-      
+
       // Check if retry would exceed max retry limit
       const maxRetries = await RulebookService.getMaxRetries(oldJob.type);
       if (newRetryCount > maxRetries) {
@@ -235,7 +239,7 @@ class EmailJobController {
           cancelledJobs: cancelledJobs.count,
         });
       }
-      
+
       // 1. Mark OLD job metadata as 'rescheduled' but KEEP STATUS
       await prisma.emailJob.update({
         where: { id: parseInt(id) },
@@ -243,40 +247,48 @@ class EmailJobController {
           metadata: {
             ...oldJob.metadata,
             rescheduled: true,
-            rescheduledAt: new Date()
-          }
-        }
+            rescheduledAt: new Date(),
+          },
+        },
       });
 
       // 2. Calculate new scheduled time using SmartDelayService
       // This respects the configured delay hours (e.g., 2 hours) and working hours/days
       const retryDelayHours = await RulebookService.getRetryDelayHours();
-      
-      console.log(`[RetryJob] Calculating schedule with ${retryDelayHours}hr delay for job ${id}`);
-      
+
+      console.log(
+        `[RetryJob] Calculating schedule with ${retryDelayHours}hr delay for job ${id}`,
+      );
+
       const delayResult = await SmartDelayService.calculateNextValidTime(
         new Date(),
         retryDelayHours,
-        lead.timezone || 'UTC'
+        lead.timezone || "UTC",
       );
-      
+
       let newScheduledFor = delayResult.time;
-      console.log(`[RetryJob] SmartDelayService result: ${newScheduledFor} (shifted: ${delayResult.wasShifted}, reason: ${delayResult.shiftReason || 'none'})`);
-      
+      console.log(
+        `[RetryJob] SmartDelayService result: ${newScheduledFor} (shifted: ${delayResult.wasShifted}, reason: ${delayResult.shiftReason || "none"})`,
+      );
+
       // Validate the time
       if (!newScheduledFor || isNaN(newScheduledFor.getTime())) {
         // Fallback: use the configured delay from now
-        newScheduledFor = new Date(Date.now() + retryDelayHours * 60 * 60 * 1000);
-        console.warn('[RetryJob] SmartDelayService returned invalid time, using simple delay fallback');
+        newScheduledFor = new Date(
+          Date.now() + retryDelayHours * 60 * 60 * 1000,
+        );
+        console.warn(
+          "[RetryJob] SmartDelayService returned invalid time, using simple delay fallback",
+        );
       }
-      
+
       // 3. Create NEW job for the retry using EmailSchedulerService (Enforces Rate Limits!)
       const settings = await SettingsRepository.getSettings();
       const schedulerSettings = {
         businessHours: settings.businessHours,
-        windowMinutes: settings.rateLimit?.windowMinutes || 15
+        windowMinutes: settings.rateLimit?.windowMinutes || 15,
       };
-      
+
       // Use scheduleEmailJob to respect rate limits and business hours
       // Pass skipDuplicateCheck: true because this is an explicit retry of a cancelled/failed job
       const newJob = await EmailSchedulerService.scheduleEmailJob(
@@ -284,90 +296,119 @@ class EmailJobController {
         oldJob.type,
         newScheduledFor, // Target time (calculated with SmartDelay)
         schedulerSettings,
-        'pending',
-        newRetryCount,  // Properly incremented retry count
+        "pending",
+        newRetryCount, // Properly incremented retry count
         oldJob.templateId,
         null, // condition
-        { skipDuplicateCheck: true }  // Allow retry even if old job exists
+        { skipDuplicateCheck: true }, // Allow retry even if old job exists
       );
-      
+
       if (!newJob) {
-        return res.status(400).json({ error: 'Failed to schedule retry: Rate limits or duplicate check prevented scheduling' });
+        return res
+          .status(400)
+          .json({
+            error:
+              "Failed to schedule retry: Rate limits or duplicate check prevented scheduling",
+          });
       }
-      
+
+      // CLEAR FAILURE STATE: Retry scheduled successfully, clear the failure flag
+      // This allows auto-resume to work again after manual intervention
+      await prisma.lead.update({
+        where: { id: lead.id },
+        data: {
+          isInFailure: false,
+          // Keep lastFailureAt/lastFailureType for history
+        },
+      });
+      console.log(
+        `[RetryJob] Cleared isInFailure flag for lead ${lead.id} after successful retry schedule`,
+      );
+
       // Update old job to mark as rescheduled with reference to new job
       await prisma.emailJob.update({
         where: { id: parseInt(id) },
         data: {
-          status: 'rescheduled',
+          status: "rescheduled",
           metadata: {
             ...oldJob.metadata,
             rescheduled: true,
             rescheduledAt: new Date(),
-            rescheduledTo: newJob.id
-          }
-        }
+            rescheduledTo: newJob.id,
+          },
+        },
       });
 
       // PRIORITY-BASED PAUSING: Check if this job type has higher priority than existing pending jobs
       // If so, pause the lower priority jobs
       const retryJobPriority = RulebookService.getMailTypePriority(oldJob.type);
       const queueWatcherRules = RulebookService.getQueueWatcherRules();
-      
-      if (queueWatcherRules.priorityScheduling.enabled && queueWatcherRules.priorityScheduling.canPauseLowerPriority) {
+
+      if (
+        queueWatcherRules.priorityScheduling.enabled &&
+        queueWatcherRules.priorityScheduling.canPauseLowerPriority
+      ) {
         // Find all pending jobs for this lead with lower priority
         const activeStatuses = RulebookService.getActiveStatuses();
         const pendingJobs = await prisma.emailJob.findMany({
           where: {
             leadId: lead.id,
             status: { in: activeStatuses },
-            id: { not: newJob.id }  // Exclude the job we just created
-          }
+            id: { not: newJob.id }, // Exclude the job we just created
+          },
         });
-        
+
         for (const pendingJob of pendingJobs) {
-          const pendingJobPriority = RulebookService.getMailTypePriority(pendingJob.type);
-          
+          const pendingJobPriority = RulebookService.getMailTypePriority(
+            pendingJob.type,
+          );
+
           // If the retried job has HIGHER priority, pause the lower priority job
           if (retryJobPriority > pendingJobPriority) {
-            console.log(`[RetryJob] Pausing lower priority job ${pendingJob.id} (${pendingJob.type}, priority=${pendingJobPriority}) for higher priority retry (${oldJob.type}, priority=${retryJobPriority})`);
-            
+            console.log(
+              `[RetryJob] Pausing lower priority job ${pendingJob.id} (${pendingJob.type}, priority=${pendingJobPriority}) for higher priority retry (${oldJob.type}, priority=${retryJobPriority})`,
+            );
+
             // Remove from BullMQ queue
             if (pendingJob.metadata?.queueJobId) {
               try {
-                const bullJob = await emailSendQueue.getJob(pendingJob.metadata.queueJobId);
+                const bullJob = await emailSendQueue.getJob(
+                  pendingJob.metadata.queueJobId,
+                );
                 if (bullJob) await bullJob.remove();
               } catch (e) {
-                console.warn(`[RetryJob] Could not remove BullMQ job: ${e.message}`);
+                console.warn(
+                  `[RetryJob] Could not remove BullMQ job: ${e.message}`,
+                );
               }
             }
-            
+
             // Update job status to paused
             await prisma.emailJob.update({
               where: { id: pendingJob.id },
               data: {
-                status: 'paused',
+                status: "paused",
                 lastError: `Paused: Higher priority ${oldJob.type} was retried`,
-                cancellationReason: 'priority_paused'
-              }
+                cancellationReason: "priority_paused",
+              },
             });
-            
+
             // Create event history
             await prisma.eventHistory.create({
               data: {
                 leadId: lead.id,
-                event: 'job_paused_priority',
+                event: "job_paused_priority",
                 timestamp: new Date(),
                 details: {
                   reason: `Paused due to higher priority ${oldJob.type} retry`,
                   pausedJobId: pendingJob.id,
                   pausedJobType: pendingJob.type,
                   retryJobId: newJob.id,
-                  retryJobType: oldJob.type
+                  retryJobType: oldJob.type,
                 },
                 emailType: pendingJob.type,
-                emailJobId: pendingJob.id
-              }
+                emailJobId: pendingJob.id,
+              },
             });
           }
         }
@@ -382,9 +423,9 @@ class EmailJobController {
             ...oldJob.metadata, // Preserve original metadata including triggerEvent
             rescheduled: true,
             retryReason: `Retry from ${oldJob.status}`,
-            originalJobId: oldJob.id
-          }
-        }
+            originalJobId: oldJob.id,
+          },
+        },
       });
 
       // 4. Update Lead status and add event
@@ -392,25 +433,32 @@ class EmailJobController {
       let newLeadStatus;
       if (RulebookService.isConditional(oldJob.type)) {
         let triggerEvent = oldJob.metadata?.triggerEvent;
-        
+
         // Fallback: Try to get trigger event from conditional email settings
-        if (!triggerEvent && oldJob.type.startsWith('conditional:')) {
-          const conditionalName = oldJob.type.replace('conditional:', '');
+        if (!triggerEvent && oldJob.type.startsWith("conditional:")) {
+          const conditionalName = oldJob.type.replace("conditional:", "");
           try {
-            const conditionalSettings = await prisma.conditionalEmail.findFirst({
-              where: { name: conditionalName }
-            });
+            const conditionalSettings = await prisma.conditionalEmail.findFirst(
+              {
+                where: { name: conditionalName },
+              },
+            );
             if (conditionalSettings?.triggerEvent) {
               triggerEvent = conditionalSettings.triggerEvent;
             }
           } catch (e) {
-            console.warn(`[RetryJob] Could not lookup conditional settings: ${e.message}`);
+            console.warn(
+              `[RetryJob] Could not lookup conditional settings: ${e.message}`,
+            );
           }
         }
-        
+
         // If we found a trigger event, use proper format
         if (triggerEvent) {
-          newLeadStatus = RulebookService.formatConditionalStatus(triggerEvent, 'rescheduled');
+          newLeadStatus = RulebookService.formatConditionalStatus(
+            triggerEvent,
+            "rescheduled",
+          );
         } else {
           // Last resort: use a generic conditional format
           newLeadStatus = `conditional:rescheduled`;
@@ -419,71 +467,91 @@ class EmailJobController {
         newLeadStatus = `${oldJob.type}:rescheduled`;
       }
       await LeadRepository.updateStatus(lead.id, newLeadStatus);
-      await LeadRepository.addEvent(lead.id, 'rescheduled', {
-        reason: `Manual retry from ${oldJob.status}`,
-        oldJobId: oldJob.id,
-        newJobId: newJob.id,
-        newScheduledFor
-      }, oldJob.type, newJob.id);
+      await LeadRepository.addEvent(
+        lead.id,
+        "rescheduled",
+        {
+          reason: `Manual retry from ${oldJob.status}`,
+          oldJobId: oldJob.id,
+          newJobId: newJob.id,
+          newScheduledFor,
+        },
+        oldJob.type,
+        newJob.id,
+      );
 
       // 4.5 SYNC emailSchedule status (for Sequence Progress card)
-      const isInitial = oldJob.type?.toLowerCase().includes('initial');
+      const isInitial = oldJob.type?.toLowerCase().includes("initial");
       if (isInitial) {
         // Update initialStatus in emailSchedule
         await prisma.emailSchedule.updateMany({
           where: { leadId: lead.id },
-          data: { 
-            initialStatus: 'rescheduled',
-            initialScheduledFor: newScheduledFor
-          }
+          data: {
+            initialStatus: "rescheduled",
+            initialScheduledFor: newScheduledFor,
+          },
         });
-        console.log(`[RetryJob] Synced emailSchedule.initialStatus to 'rescheduled'`);
+        console.log(
+          `[RetryJob] Synced emailSchedule.initialStatus to 'rescheduled'`,
+        );
       } else {
         // Update followup status in emailSchedule.followups JSON
         const leadWithSchedule = await prisma.lead.findUnique({
           where: { id: lead.id },
-          include: { emailSchedule: true }
+          include: { emailSchedule: true },
         });
-        
+
         if (leadWithSchedule?.emailSchedule) {
           let followups = leadWithSchedule.emailSchedule.followups || [];
           if (!Array.isArray(followups)) {
-            try { followups = JSON.parse(followups); } catch(e) { followups = []; }
+            try {
+              followups = JSON.parse(followups);
+            } catch (e) {
+              followups = [];
+            }
           }
-          
-          const followupIndex = followups.findIndex(f => f.name === oldJob.type);
+
+          const followupIndex = followups.findIndex(
+            (f) => f.name === oldJob.type,
+          );
           if (followupIndex >= 0) {
-            followups[followupIndex].status = 'rescheduled';
+            followups[followupIndex].status = "rescheduled";
             followups[followupIndex].scheduledFor = newScheduledFor;
             await prisma.emailSchedule.update({
               where: { id: leadWithSchedule.emailSchedule.id },
-              data: { followups }
+              data: { followups },
             });
-            console.log(`[RetryJob] Synced emailSchedule.followups[${oldJob.type}].status to 'rescheduled'`);
+            console.log(
+              `[RetryJob] Synced emailSchedule.followups[${oldJob.type}].status to 'rescheduled'`,
+            );
           }
         }
       }
 
       // 5. Queue the new job
       const delay = Math.max(0, newScheduledFor.getTime() - Date.now());
-      const queueJob = await emailSendQueue.add('send-email', {
-        emailJobId: newJob.id,
-        leadId: lead.id,
-        leadEmail: lead.email,
-        emailType: newJob.type
-      }, {
-        delay,
-        jobId: `email-${newJob.id}`,
-        removeOnComplete: 1000,
-        removeOnFail: 5000
-      });
+      const queueJob = await emailSendQueue.add(
+        "send-email",
+        {
+          emailJobId: newJob.id,
+          leadId: lead.id,
+          leadEmail: lead.email,
+          emailType: newJob.type,
+        },
+        {
+          delay,
+          jobId: `email-${newJob.id}`,
+          removeOnComplete: 1000,
+          removeOnFail: 5000,
+        },
+      );
 
       // Update job with queue reference
       await prisma.emailJob.update({
         where: { id: newJob.id },
         data: {
-          metadata: { ...newJob.metadata, queueJobId: queueJob.id }
-        }
+          metadata: { ...newJob.metadata, queueJobId: queueJob.id },
+        },
       });
 
       res.status(200).json({
@@ -491,7 +559,7 @@ class EmailJobController {
         message: `Job retried successfully. New job scheduled for ${newScheduledFor}`,
         oldJob: { id: oldJob.id, status: oldJob.status },
         newJob: { id: newJob.id, scheduledFor: newScheduledFor },
-        retryCount: newRetryCount
+        retryCount: newRetryCount,
       });
     } catch (error) {
       console.error('Retry job error:', error);

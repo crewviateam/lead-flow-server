@@ -758,7 +758,15 @@ const DEFAULT_RULEBOOK = {
     terminalStates: ['dead', 'unsubscribed', 'complaint'],
     
     // PAUSES FUTURE MAILS: No more emails should be sent
-    pausesFutureMails: ['dead', 'unsubscribed', 'complaint']
+    pausesFutureMails: ['dead', 'unsubscribed', 'complaint'],
+    
+    // AUTO-RESUME ON STATUS: Which statuses trigger resuming paused jobs
+    // Only 'delivered' and 'cancelled' should trigger resume
+    // NOTE: 'soft_bounce', 'rescheduled' should NOT trigger resume (mail still active)
+    autoResumeOnStatus: ['delivered', 'cancelled'],
+    
+    // FAILURE STATUSES: Require manual intervention before resuming
+    failureStatuses: ['hard_bounce', 'blocked', 'spam', 'invalid', 'error', 'failed']
   },
   
   // ============================================================
@@ -1259,42 +1267,48 @@ class RulebookService {
     this._cacheTimestamp = null;
     this._cacheTTL = 60000; // 1 minute cache
   }
-  
+
   /**
    * Get the current rulebook (user-configured or default)
    */
   async getRulebook() {
     // Check cache
-    if (this._cachedRulebook && Date.now() - this._cacheTimestamp < this._cacheTTL) {
+    if (
+      this._cachedRulebook &&
+      Date.now() - this._cacheTimestamp < this._cacheTTL
+    ) {
       return this._cachedRulebook;
     }
-    
+
     try {
       // Try to get user-configured rulebook from settings
       const settings = await prisma.settings.findFirst();
-      
+
       if (settings?.rulebook) {
         // Merge with defaults to ensure all keys exist
-        this._cachedRulebook = this._deepMerge(DEFAULT_RULEBOOK, settings.rulebook);
+        this._cachedRulebook = this._deepMerge(
+          DEFAULT_RULEBOOK,
+          settings.rulebook,
+        );
       } else {
         this._cachedRulebook = { ...DEFAULT_RULEBOOK };
       }
-      
+
       this._cacheTimestamp = Date.now();
       return this._cachedRulebook;
     } catch (error) {
-      console.error('[RulebookService] Error loading rulebook:', error);
+      console.error("[RulebookService] Error loading rulebook:", error);
       return { ...DEFAULT_RULEBOOK };
     }
   }
-  
+
   /**
    * Get default rulebook
    */
   getDefaultRulebook() {
     return JSON.parse(JSON.stringify(DEFAULT_RULEBOOK));
   }
-  
+
   /**
    * Update rulebook with user configuration
    */
@@ -1303,23 +1317,23 @@ class RulebookService {
       const currentRulebook = await this.getRulebook();
       const newRulebook = this._deepMerge(currentRulebook, updates);
       newRulebook.lastUpdated = new Date().toISOString();
-      
+
       // Update in settings
       await prisma.settings.updateMany({
-        data: { rulebook: newRulebook }
+        data: { rulebook: newRulebook },
       });
-      
+
       // Clear cache
       this._cachedRulebook = null;
-      
-      console.log('[RulebookService] Rulebook updated');
+
+      console.log("[RulebookService] Rulebook updated");
       return newRulebook;
     } catch (error) {
-      console.error('[RulebookService] Error updating rulebook:', error);
+      console.error("[RulebookService] Error updating rulebook:", error);
       throw error;
     }
   }
-  
+
   /**
    * Reset rulebook to defaults
    */
@@ -1327,64 +1341,68 @@ class RulebookService {
     try {
       const defaultCopy = JSON.parse(JSON.stringify(DEFAULT_RULEBOOK));
       defaultCopy.lastUpdated = new Date().toISOString();
-      
+
       await prisma.settings.updateMany({
-        data: { rulebook: defaultCopy }
+        data: { rulebook: defaultCopy },
       });
-      
+
       // Clear cache
       this._cachedRulebook = null;
-      
-      console.log('[RulebookService] Rulebook reset to defaults');
+
+      console.log("[RulebookService] Rulebook reset to defaults");
       return defaultCopy;
     } catch (error) {
-      console.error('[RulebookService] Error resetting rulebook:', error);
+      console.error("[RulebookService] Error resetting rulebook:", error);
       throw error;
     }
   }
-  
+
   /**
    * Deep merge two objects
    */
   _deepMerge(target, source) {
     const result = { ...target };
-    
+
     for (const key in source) {
-      if (source[key] && typeof source[key] === 'object' && !Array.isArray(source[key])) {
+      if (
+        source[key] &&
+        typeof source[key] === "object" &&
+        !Array.isArray(source[key])
+      ) {
         result[key] = this._deepMerge(result[key] || {}, source[key]);
       } else {
         result[key] = source[key];
       }
     }
-    
+
     return result;
   }
-  
+
   // ========================================
   // HELPER METHODS - TYPE RESOLUTION
   // ========================================
-  
+
   /**
    * Get mail type definition from internal type string
    */
   getMailType(typeString) {
     if (!typeString) return this.getDefaultRulebook().mailTypes.followup;
-    
+
     const rulebook = this._cachedRulebook || DEFAULT_RULEBOOK;
     const t = typeString.toLowerCase();
-    
+
     // Check each mail type
     for (const [key, mailType] of Object.entries(rulebook.mailTypes)) {
       // Check if matches any internal type
-      if (mailType.internalTypes.some(it => t.includes(it.toLowerCase()))) {
+      if (mailType.internalTypes.some((it) => t.includes(it.toLowerCase()))) {
         return mailType;
       }
     }
-    
+
     // Default to followup
     return rulebook.mailTypes.followup;
   }
-  
+
   /**
    * Get simplified type name for display
    * For followups, returns the actual followup name (e.g., "First Followup")
@@ -1392,36 +1410,38 @@ class RulebookService {
    * NOTE: For conditional emails, prefer getDisplayTypeName() which uses metadata for proper formatting
    */
   getSimplifiedTypeName(type, metadata = null) {
-    if (!type) return 'Email';
-    
+    if (!type) return "Email";
+
     const mailType = this.getMailType(type);
-    
+
     // For followups, return the actual type name instead of generic "Followup Mail"
     // This ensures status shows "First Followup:scheduled" not "Followup Mail:scheduled"
-    if (mailType.id === 'followup') {
+    if (mailType.id === "followup") {
       // Check if it's a specific followup name (matches one of the internalTypes)
       const isSpecificFollowup = mailType.internalTypes.some(
-        it => type.toLowerCase() === it.toLowerCase() && it.toLowerCase() !== 'followup'
+        (it) =>
+          type.toLowerCase() === it.toLowerCase() &&
+          it.toLowerCase() !== "followup",
       );
       if (isSpecificFollowup) {
         return type; // Return actual name like "First Followup"
       }
     }
-    
+
     // For conditionals, try to use trigger event from metadata for proper display
-    if (mailType.id === 'conditional' && type.startsWith('conditional:')) {
+    if (mailType.id === "conditional" && type.startsWith("conditional:")) {
       // If metadata has triggerEvent, format as "conditional {triggerEvent}"
       if (metadata?.triggerEvent) {
         return `conditional ${metadata.triggerEvent}`;
       }
       // Fallback: return "conditional" without the name part
-      return 'conditional';
+      return "conditional";
     }
-    
+
     // For initial and manual, use the display name
     return mailType.displayName;
   }
-  
+
   /**
    * Get display-friendly type name for UI (Email Queue, Schedule pages)
    * Uses job metadata for proper conditional email formatting
@@ -1429,10 +1449,10 @@ class RulebookService {
    * @returns {string} Display-friendly type name
    */
   getDisplayTypeName(job) {
-    if (!job) return 'Email';
+    if (!job) return "Email";
     return this.getSimplifiedTypeName(job.type, job.metadata);
   }
-  
+
   /**
    * Format status for display with proper type name
    * Used by Email Queue and Schedule pages
@@ -1440,75 +1460,81 @@ class RulebookService {
    * @returns {string} Formatted status like "condition opened:pending"
    */
   formatJobStatusForDisplay(job) {
-    if (!job) return 'unknown';
-    
-    const status = job.status || 'pending';
-    
+    if (!job) return "unknown";
+
+    const status = job.status || "pending";
+
     // Special handling for conditional emails - use "condition {triggerEvent}" format
-    if (job.type?.startsWith('conditional:')) {
+    if (job.type?.startsWith("conditional:")) {
       // Try metadata.triggerEvent first
       let triggerEvent = job.metadata?.triggerEvent;
-      
+
       // Fallback: Try metadata.trigger (alternate field name)
       if (!triggerEvent && job.metadata?.trigger) {
         triggerEvent = job.metadata.trigger;
       }
-      
+
       // Fallback: Try metadata.conditionType
       if (!triggerEvent && job.metadata?.conditionType) {
         triggerEvent = job.metadata.conditionType;
       }
-      
+
       if (triggerEvent) {
         return `condition ${triggerEvent}:${status}`;
       }
-      
+
       // Final fallback: Return generic conditional format
       // The triggerEvent will be added when we have async lookup ability
       return `conditional:${status}`;
     }
-    
+
     // For other types, use the display type name
     const typeName = this.getDisplayTypeName(job);
     return `${typeName}:${status}`;
   }
-  
+
   /**
    * Format status for display with async lookup for missing triggerEvent
    * @param {Object} job - The EmailJob object
    * @returns {Promise<string>} Formatted status like "condition opened:pending"
    */
   async formatJobStatusForDisplayAsync(job) {
-    if (!job) return 'unknown';
-    
-    const status = job.status || 'pending';
-    
+    if (!job) return "unknown";
+
+    const status = job.status || "pending";
+
     // Special handling for conditional emails
-    if (job.type?.startsWith('conditional:')) {
-      let triggerEvent = job.metadata?.triggerEvent || job.metadata?.trigger || job.metadata?.conditionType;
-      
+    if (job.type?.startsWith("conditional:")) {
+      let triggerEvent =
+        job.metadata?.triggerEvent ||
+        job.metadata?.trigger ||
+        job.metadata?.conditionType;
+
       // If not in metadata, try to look up from conditional email settings
       if (!triggerEvent && job.metadata?.conditionalEmailId) {
         try {
           const conditionalEmail = await prisma.conditionalEmail.findUnique({
             where: { id: job.metadata.conditionalEmailId },
-            select: { triggerEvent: true }
+            select: { triggerEvent: true },
           });
           if (conditionalEmail?.triggerEvent) {
             triggerEvent = conditionalEmail.triggerEvent;
           }
         } catch (e) {
-          console.warn(`[formatJobStatusForDisplayAsync] Lookup failed:`, e.message);
+          console.warn(
+            `[formatJobStatusForDisplayAsync] Lookup failed:`,
+            e.message,
+          );
         }
       }
-      
+
       // Still not found? Try extracting from job type (e.g., "conditional:Thank You Mail" -> lookup by name)
       if (!triggerEvent) {
         try {
-          const conditionalName = job.type.replace('conditional:', '');
+          const conditionalName = job.type.replace("conditional:", "");
           const conditionalEmail = await prisma.conditionalEmail.findFirst({
             where: { name: conditionalName },
-            select: { triggerEvent: true }
+            select: { triggerEvent: true },
           });
           if (conditionalEmail?.triggerEvent) {
             triggerEvent = conditionalEmail.triggerEvent;
@@ -1517,42 +1543,42 @@ class RulebookService {
           // Ignore lookup errors
         }
       }
-      
+
       if (triggerEvent) {
         return `condition ${triggerEvent}:${status}`;
       }
-      
+
       return `conditional:${status}`;
     }
-    
+
     const typeName = this.getDisplayTypeName(job);
     return `${typeName}:${status}`;
   }
-  
+
   /**
    * Check if type is a conditional email
    */
   isConditional(type) {
     if (!type) return false;
-    return type.toLowerCase().startsWith('conditional:');
+    return type.toLowerCase().startsWith("conditional:");
   }
-  
+
   /**
    * Check if type is an initial email
    */
   isInitial(type) {
     if (!type) return false;
-    return type.toLowerCase().includes('initial');
+    return type.toLowerCase().includes("initial");
   }
-  
+
   /**
    * Check if type is a manual email
    */
   isManual(type) {
     if (!type) return false;
-    return type.toLowerCase() === 'manual';
+    return type.toLowerCase() === "manual";
   }
-  
+
   /**
    * Check if a mail type can be cancelled
    * Skippable types should use skip instead of cancel
@@ -1561,7 +1587,7 @@ class RulebookService {
     const mailType = this.getMailType(type);
     return mailType.canCancel === true;
   }
-  
+
   /**
    * Check if a mail type can be skipped
    */
@@ -1569,7 +1595,7 @@ class RulebookService {
     const mailType = this.getMailType(type);
     return mailType.canSkip === true;
   }
-  
+
   /**
    * Check if a mail type can be paused
    */
@@ -1577,7 +1603,7 @@ class RulebookService {
     const mailType = this.getMailType(type);
     return mailType.canPause === true;
   }
-  
+
   /**
    * Check if a mail type can be retried
    */
@@ -1585,7 +1611,7 @@ class RulebookService {
     const mailType = this.getMailType(type);
     return mailType.canRetry === true;
   }
-  
+
   /**
    * Check if a mail type can be rescheduled
    */
@@ -1593,7 +1619,7 @@ class RulebookService {
     const mailType = this.getMailType(type);
     return mailType.canReschedule === true;
   }
-  
+
   /**
    * Get allowed actions for a mail type
    */
@@ -1604,27 +1630,29 @@ class RulebookService {
       canCancel: mailType.canCancel || false,
       canPause: mailType.canPause || false,
       canRetry: mailType.canRetry || false,
-      canReschedule: mailType.canReschedule || false
+      canReschedule: mailType.canReschedule || false,
     };
   }
-  
+
   // ========================================
   // HELPER METHODS - STATUS RESOLUTION
   // ========================================
-  
+
   /**
    * Get status display info
    */
   async getStatusDisplay(status) {
     const rulebook = await this.getRulebook();
-    return rulebook.statuses[status] || { 
-      display: status, 
-      color: '#64748b',
-      bgColor: 'rgba(100, 116, 139, 0.1)',
-      isTerminal: false 
-    };
+    return (
+      rulebook.statuses[status] || {
+        display: status,
+        color: "#64748b",
+        bgColor: "rgba(100, 116, 139, 0.1)",
+        isTerminal: false,
+      }
+    );
   }
-  
+
   /**
    * Check if status is forbidden for lead display
    */
@@ -1632,7 +1660,7 @@ class RulebookService {
     const rulebook = await this.getRulebook();
     return rulebook.leadStatusRules.forbiddenStatuses.includes(status);
   }
-  
+
   /**
    * Check if status is a terminal state
    */
@@ -1640,7 +1668,7 @@ class RulebookService {
     const rulebook = await this.getRulebook();
     return rulebook.statuses[status]?.isTerminal || false;
   }
-  
+
   /**
    * Check if status is an active/pending state
    */
@@ -1648,7 +1676,7 @@ class RulebookService {
     const rulebook = await this.getRulebook();
     return rulebook.statuses[status]?.isActive || false;
   }
-  
+
   /**
    * Get lead status priority
    */
@@ -1656,11 +1684,11 @@ class RulebookService {
     const rulebook = await this.getRulebook();
     return rulebook.leadStatusRules.priority[status] || 0;
   }
-  
+
   // ========================================
   // HELPER METHODS - TRIGGER CHECKS
   // ========================================
-  
+
   /**
    * Check if event should trigger conditional evaluation
    */
@@ -1668,7 +1696,7 @@ class RulebookService {
     const rulebook = await this.getRulebook();
     return rulebook.triggerRules.conditionalTriggerEvents.includes(event);
   }
-  
+
   /**
    * Check if event should trigger followup scheduling
    */
@@ -1676,7 +1704,7 @@ class RulebookService {
     const rulebook = await this.getRulebook();
     return rulebook.triggerRules.followupTriggerEvents.includes(event);
   }
-  
+
   /**
    * Check if event should trigger reschedule
    */
@@ -1684,7 +1712,7 @@ class RulebookService {
     const rulebook = await this.getRulebook();
     return rulebook.triggerRules.rescheduleEvents.includes(event);
   }
-  
+
   /**
    * Get score adjustment for an event
    */
@@ -1692,11 +1720,11 @@ class RulebookService {
     const rulebook = await this.getRulebook();
     return rulebook.triggerRules.scoreAdjustments[event] || 0;
   }
-  
+
   // ========================================
   // HELPER METHODS - ACTION RULES
   // ========================================
-  
+
   /**
    * Get action rules for manual mail
    */
@@ -1704,7 +1732,7 @@ class RulebookService {
     const rulebook = await this.getRulebook();
     return rulebook.actionRules.manualMailActions;
   }
-  
+
   /**
    * Get action rules for conditional emails
    */
@@ -1712,7 +1740,7 @@ class RulebookService {
     const rulebook = await this.getRulebook();
     return rulebook.actionRules.conditionalEmailActions;
   }
-  
+
   /**
    * Get action rules for resuming followups
    */
@@ -1720,7 +1748,7 @@ class RulebookService {
     const rulebook = await this.getRulebook();
     return rulebook.actionRules.resumeFollowupActions;
   }
-  
+
   /**
    * Get action rules for cancelling a job
    */
@@ -1728,11 +1756,11 @@ class RulebookService {
     const rulebook = await this.getRulebook();
     return rulebook.actionRules.cancelJobActions;
   }
-  
+
   // ========================================
   // HELPER METHODS - STATUS FORMATTING
   // ========================================
-  
+
   /**
    * Format lead status according to rules
    * @param {string} type - Email type (e.g., "conditional:Thank You Mail", "First Followup")
@@ -1741,19 +1769,23 @@ class RulebookService {
    */
   formatLeadStatus(type, status, metadata = {}) {
     const rulebook = this._cachedRulebook || DEFAULT_RULEBOOK;
-    
+
     // Check if conditional and should use special format
-    if (this.isConditional(type) && rulebook.displayRules.useConditionFormatInLeadStatus) {
-      const triggerEvent = metadata.triggerEvent || this._extractTriggerFromMetadata(metadata);
+    if (
+      this.isConditional(type) &&
+      rulebook.displayRules.useConditionFormatInLeadStatus
+    ) {
+      const triggerEvent =
+        metadata.triggerEvent || this._extractTriggerFromMetadata(metadata);
       if (triggerEvent) {
         return `condition ${triggerEvent}:${status}`;
       }
     }
-    
+
     const simplifiedType = this.getSimplifiedTypeName(type);
     return `${simplifiedType}:${status}`;
   }
-  
+
   /**
    * Format conditional email status specifically
    * Always uses "condition {trigger}:{status}" format
@@ -1763,7 +1795,7 @@ class RulebookService {
   formatConditionalStatus(triggerEvent, status) {
     return `condition ${triggerEvent}:${status}`;
   }
-  
+
   /**
    * Extract trigger event from metadata or job type
    */
@@ -1773,59 +1805,64 @@ class RulebookService {
     // Try to extract from conditionalExpr or other fields
     return null;
   }
-  
+
   /**
    * Format queue status according to rules
    */
   formatQueueStatus(type, status, metadata = {}) {
     const rulebook = this._cachedRulebook || DEFAULT_RULEBOOK;
-    
+
     // Check if conditional and should use special format
-    if (this.isConditional(type) && rulebook.displayRules.useConditionFormatInQueue && metadata.triggerEvent) {
-      const displayStatus = status === 'pending' ? 'pending' : status;
+    if (
+      this.isConditional(type) &&
+      rulebook.displayRules.useConditionFormatInQueue &&
+      metadata.triggerEvent
+    ) {
+      const displayStatus = status === "pending" ? "pending" : status;
       return `condition ${metadata.triggerEvent}:${displayStatus}`;
     }
-    
+
     // Standard format
-    const displayStatus = status.charAt(0).toUpperCase() + status.slice(1).replace('_', ' ');
+    const displayStatus =
+      status.charAt(0).toUpperCase() + status.slice(1).replace("_", " ");
     return `${type}:${displayStatus}`;
   }
-  
+
   // ========================================
   // HELPER METHODS - VALIDATION
   // ========================================
-  
+
   /**
    * Check if status transition is allowed
    */
   async isTransitionAllowed(fromStatus, toStatus) {
     const rulebook = await this.getRulebook();
     const statusDef = rulebook.statuses[fromStatus];
-    
+
     if (!statusDef) return true; // Unknown status, allow
     if (!statusDef.allowedTransitions) return true; // No restrictions
-    
+
     return statusDef.allowedTransitions.includes(toStatus);
   }
-  
+
   /**
    * Check if job can be retried
    */
   async canRetryJob(status, retryCount) {
     const rulebook = await this.getRulebook();
     const statusDef = rulebook.statuses[status];
-    
+
     if (!statusDef) return false;
     if (!statusDef.canRetry) return false;
-    
+
     return retryCount < rulebook.validationRules.maxRetriesPerJob;
   }
-  
+
   // ========================================
   // ACTION VALIDATION METHODS
   // Call these before performing any action
   // ========================================
-  
+
   /**
    * Validate if an action can be performed on a mail type
    * @param {string} action - 'skip' | 'cancel' | 'pause' | 'resume' | 'retry' | 'reschedule'
@@ -1835,67 +1872,118 @@ class RulebookService {
    */
   validateAction(action, type, status) {
     const mailType = this.getMailType(type);
-    const statusDef = (this._cachedRulebook || DEFAULT_RULEBOOK).statuses[status];
-    
+    const statusDef = (this._cachedRulebook || DEFAULT_RULEBOOK).statuses[
+      status
+    ];
+
     switch (action) {
-      case 'skip':
+      case "skip":
         if (!mailType.canSkip) {
-          return { allowed: false, reason: `${mailType.displayName} cannot be skipped` };
+          return {
+            allowed: false,
+            reason: `${mailType.displayName} cannot be skipped`,
+          };
         }
-        if (!['pending', 'scheduled', 'queued', 'rescheduled'].includes(status)) {
-          return { allowed: false, reason: `Cannot skip job in ${status} status` };
+        if (
+          !["pending", "scheduled", "queued", "rescheduled"].includes(status)
+        ) {
+          return {
+            allowed: false,
+            reason: `Cannot skip job in ${status} status`,
+          };
         }
         return { allowed: true };
-        
-      case 'cancel':
+
+      case "cancel":
         if (!mailType.canCancel) {
-          return { allowed: false, reason: `${mailType.displayName} cannot be cancelled. Use skip for followups.` };
+          return {
+            allowed: false,
+            reason: `${mailType.displayName} cannot be cancelled. Use skip for followups.`,
+          };
         }
-        if (!['pending', 'scheduled', 'queued', 'rescheduled', 'paused'].includes(status)) {
-          return { allowed: false, reason: `Cannot cancel job in ${status} status` };
+        if (
+          !["pending", "scheduled", "queued", "rescheduled", "paused"].includes(
+            status,
+          )
+        ) {
+          return {
+            allowed: false,
+            reason: `Cannot cancel job in ${status} status`,
+          };
         }
         return { allowed: true };
-        
-      case 'pause':
+
+      case "pause":
         if (!mailType.canPause) {
-          return { allowed: false, reason: `${mailType.displayName} cannot be paused` };
+          return {
+            allowed: false,
+            reason: `${mailType.displayName} cannot be paused`,
+          };
         }
-        if (!['pending', 'scheduled', 'queued', 'rescheduled'].includes(status)) {
-          return { allowed: false, reason: `Cannot pause job in ${status} status` };
+        if (
+          !["pending", "scheduled", "queued", "rescheduled"].includes(status)
+        ) {
+          return {
+            allowed: false,
+            reason: `Cannot pause job in ${status} status`,
+          };
         }
         return { allowed: true };
-        
-      case 'resume':
+
+      case "resume":
         // Resume is only allowed if followups are paused
         if (!mailType.canPause) {
-          return { allowed: false, reason: `${mailType.displayName} does not support pause/resume` };
+          return {
+            allowed: false,
+            reason: `${mailType.displayName} does not support pause/resume`,
+          };
         }
         return { allowed: true };
-        
-      case 'retry':
+
+      case "retry":
         if (!mailType.canRetry) {
-          return { allowed: false, reason: `${mailType.displayName} cannot be retried` };
+          return {
+            allowed: false,
+            reason: `${mailType.displayName} cannot be retried`,
+          };
         }
         if (!statusDef?.canRetry) {
-          return { allowed: false, reason: `Cannot retry job in ${status} status` };
+          return {
+            allowed: false,
+            reason: `Cannot retry job in ${status} status`,
+          };
         }
         return { allowed: true };
-        
-      case 'reschedule':
+
+      case "reschedule":
         if (!mailType.canReschedule) {
-          return { allowed: false, reason: `${mailType.displayName} cannot be rescheduled` };
+          return {
+            allowed: false,
+            reason: `${mailType.displayName} cannot be rescheduled`,
+          };
         }
-        const reschedulableStatuses = ['pending', 'scheduled', 'queued', 'rescheduled', 'deferred', 'failed', 'soft_bounce'];
+        const reschedulableStatuses = [
+          "pending",
+          "scheduled",
+          "queued",
+          "rescheduled",
+          "deferred",
+          "failed",
+          "soft_bounce",
+        ];
         if (!reschedulableStatuses.includes(status)) {
-          return { allowed: false, reason: `Cannot reschedule job in ${status} status` };
+          return {
+            allowed: false,
+            reason: `Cannot reschedule job in ${status} status`,
+          };
         }
         return { allowed: true };
-        
+
       default:
         return { allowed: false, reason: `Unknown action: ${action}` };
     }
   }
-  
+
   /**
    * Get all allowed actions for a job
    * @param {string} type - Email type
@@ -1903,16 +1991,23 @@ class RulebookService {
    * @returns {Object} Map of action -> {allowed, reason}
    */
   getAllowedActionsForJob(type, status) {
-    const actions = ['skip', 'cancel', 'pause', 'resume', 'retry', 'reschedule'];
+    const actions = [
+      "skip",
+      "cancel",
+      "pause",
+      "resume",
+      "retry",
+      "reschedule",
+    ];
     const result = {};
-    
+
     for (const action of actions) {
       result[action] = this.validateAction(action, type, status);
     }
-    
+
     return result;
   }
-  
+
   /**
    * Get retry configuration for a status
    * @param {string} status - Job status
@@ -1921,38 +2016,38 @@ class RulebookService {
   getRetryConfig(status) {
     const rulebook = this._cachedRulebook || DEFAULT_RULEBOOK;
     const retryRules = rulebook.retryRules;
-    
+
     // Check if auto-retry
     if (retryRules.autoRetry.triggerStatuses.includes(status)) {
       return {
-        type: 'auto',
+        type: "auto",
         maxRetries: retryRules.autoRetry.maxAutoRetries,
         backoff: retryRules.autoRetry.backoff,
         onRetry: retryRules.autoRetry.onRetry,
-        onMaxExceeded: retryRules.autoRetry.onMaxRetriesExceeded
+        onMaxExceeded: retryRules.autoRetry.onMaxRetriesExceeded,
       };
     }
-    
+
     // Check if manual retry allowed
     if (retryRules.manualRetry.allowedStatuses.includes(status)) {
       return {
-        type: 'manual',
+        type: "manual",
         maxRetries: retryRules.manualRetry.maxManualRetries,
-        onRetry: retryRules.manualRetry.onRetry
+        onRetry: retryRules.manualRetry.onRetry,
       };
     }
-    
+
     // Check if forbidden
     if (retryRules.manualRetry.forbiddenStatuses.includes(status)) {
       return {
-        type: 'forbidden',
-        reason: 'This status cannot be retried'
+        type: "forbidden",
+        reason: "This status cannot be retried",
       };
     }
-    
-    return { type: 'unknown' };
+
+    return { type: "unknown" };
   }
-  
+
   /**
    * Calculate retry delay using exponential backoff
    * @param {number} retryCount - Current retry count
@@ -1961,14 +2056,15 @@ class RulebookService {
   calculateRetryDelay(retryCount) {
     const rulebook = this._cachedRulebook || DEFAULT_RULEBOOK;
     const backoff = rulebook.retryRules.autoRetry.backoff;
-    
-    const delayMinutes = backoff.initialDelayMinutes * Math.pow(backoff.multiplier, retryCount);
+
+    const delayMinutes =
+      backoff.initialDelayMinutes * Math.pow(backoff.multiplier, retryCount);
     const maxDelayMs = backoff.maxDelayHours * 60 * 60 * 1000;
     const delayMs = Math.min(delayMinutes * 60 * 1000, maxDelayMs);
-    
+
     return delayMs;
   }
-  
+
   /**
    * Check if status requires special handling (complaint/unsubscribed)
    * @param {string} status - Job/Lead status
@@ -1977,40 +2073,40 @@ class RulebookService {
   getNegativeStatusHandling(status) {
     const rulebook = this._cachedRulebook || DEFAULT_RULEBOOK;
     const statusDef = rulebook.statuses[status];
-    
+
     return {
       pausesFuture: statusDef?.pausesFutureMails || false,
       showInComplaintPage: statusDef?.showInComplaintPage || false,
-      isNegative: rulebook.statusGroups.negative.includes(status)
+      isNegative: rulebook.statusGroups.negative.includes(status),
     };
   }
-  
+
   /**
    * Get auto-retry statuses
    */
   getAutoRetryableStatuses() {
     return [...DEFAULT_RULEBOOK.statusGroups.autoRetryable];
   }
-  
+
   /**
    * Get manual-retry-only statuses
    */
   getManualRetryOnlyStatuses() {
     return [...DEFAULT_RULEBOOK.statusGroups.manualRetryOnly];
   }
-  
+
   /**
    * Get negative statuses (complaint/unsubscribed)
    */
   getNegativeStatuses() {
     return [...DEFAULT_RULEBOOK.statusGroups.negative];
   }
-  
+
   // ========================================
   // EVENT CATEGORY METHODS
   // Single source of truth for event classification
   // ========================================
-  
+
   /**
    * Get event category for a given event type
    * @param {string} eventType - The webhook event type
@@ -2019,47 +2115,47 @@ class RulebookService {
   getEventCategory(eventType) {
     const rulebook = this._cachedRulebook || DEFAULT_RULEBOOK;
     const categories = rulebook.eventCategories;
-    
+
     for (const [categoryName, config] of Object.entries(categories)) {
       if (config.events.includes(eventType)) {
         return {
           name: categoryName,
-          ...config
+          ...config,
         };
       }
     }
-    
-    return { name: 'unknown', events: [], actions: [] };
+
+    return { name: "unknown", events: [], actions: [] };
   }
-  
+
   /**
    * Check if event is a success event
    */
   isSuccessEvent(eventType) {
-    return this.getEventCategory(eventType).name === 'success';
+    return this.getEventCategory(eventType).name === "success";
   }
-  
+
   /**
    * Check if event is an auto-reschedule event
    */
   isAutoRescheduleEvent(eventType) {
-    return this.getEventCategory(eventType).name === 'autoReschedule';
+    return this.getEventCategory(eventType).name === "autoReschedule";
   }
-  
+
   /**
    * Check if event is a spam event
    */
   isSpamEvent(eventType) {
-    return this.getEventCategory(eventType).name === 'spam';
+    return this.getEventCategory(eventType).name === "spam";
   }
-  
+
   /**
    * Check if event is a failed event
    */
   isFailedEvent(eventType) {
-    return this.getEventCategory(eventType).name === 'failed';
+    return this.getEventCategory(eventType).name === "failed";
   }
-  
+
   /**
    * Get actions for an event type
    * @param {string} eventType - The event type
@@ -2067,12 +2163,16 @@ class RulebookService {
    */
   getEventActions(eventType) {
     const category = this.getEventCategory(eventType);
-    if (category.actions && typeof category.actions === 'object' && !Array.isArray(category.actions)) {
+    if (
+      category.actions &&
+      typeof category.actions === "object" &&
+      !Array.isArray(category.actions)
+    ) {
       return category.actions[eventType] || [];
     }
     return category.actions || [];
   }
-  
+
   /**
    * Get score adjustment for an event
    */
@@ -2083,44 +2183,59 @@ class RulebookService {
     }
     return 0;
   }
-  
+
   // ========================================
   // TERMINAL STATE METHODS
   // ========================================
-  
+
   /**
    * Get all terminal state types
    */
   getTerminalStates() {
     return [...DEFAULT_RULEBOOK.statusGroups.terminalStates];
   }
-  
+
   /**
    * Check if status is a terminal state (for Terminal States page)
    */
   isTerminalState(status) {
     return this.getTerminalStates().includes(status);
   }
-  
+
   /**
    * Get statuses that pause future mails
    */
   getPausesFutureMailsStatuses() {
     return [...DEFAULT_RULEBOOK.statusGroups.pausesFutureMails];
   }
-  
+
   /**
    * Check if status should pause all future mails
    */
   shouldPauseFutureMails(status) {
     return this.getPausesFutureMailsStatuses().includes(status);
   }
-  
+
+  /**
+   * Get failure statuses that require manual intervention
+   * These block auto-resume until manually cleared
+   */
+  getFailureStatuses() {
+    return [...DEFAULT_RULEBOOK.statusGroups.failureStatuses];
+  }
+
+  /**
+   * Check if status is a failure requiring manual intervention
+   */
+  isFailureStatus(status) {
+    return this.getFailureStatuses().includes(status);
+  }
+
   // ========================================
   // DYNAMIC RETRY LIMIT METHODS
   // Gets max retries from Settings, not hardcoded
   // ========================================
-  
+
   /**
    * Get maximum retries for a mail type from Settings
    * Priority: Settings per-type -> Settings global -> Rulebook default
@@ -2129,46 +2244,51 @@ class RulebookService {
    */
   async getMaxRetries(mailType) {
     try {
-      const { SettingsRepository } = require('../repositories');
+      const { SettingsRepository } = require("../repositories");
       const settings = await SettingsRepository.getSettings();
-      
+
       // Get mail type config from rulebook
       const mailTypeConfig = this.getMailType(mailType);
-      
+
       // Priority 1: Per-type setting from Settings
       const perTypeRetries = settings.retry?.perType?.[mailTypeConfig.id];
       if (perTypeRetries !== undefined) {
         return perTypeRetries;
       }
-      
+
       // Priority 2: Global setting from Settings
-      const globalRetries = settings.retryMaxAttempts || settings.retry?.maxAttempts;
+      const globalRetries =
+        settings.retryMaxAttempts || settings.retry?.maxAttempts;
       if (globalRetries !== undefined) {
         return globalRetries;
       }
-      
+
       // Priority 3: Rulebook default
       return mailTypeConfig.maxRetries || 3;
     } catch (error) {
-      console.error('[RulebookService] Error getting max retries:', error);
+      console.error("[RulebookService] Error getting max retries:", error);
       return 3; // Fallback
     }
   }
-  
+
   /**
    * Get retry delay hours from Settings
    * @returns {Promise<number>} Delay in hours
    */
   async getRetryDelayHours() {
     try {
-      const { SettingsRepository } = require('../repositories');
+      const { SettingsRepository } = require("../repositories");
       const settings = await SettingsRepository.getSettings();
-      return settings.retrySoftBounceDelayHrs || settings.retry?.softBounceDelayHours || 2;
+      return (
+        settings.retrySoftBounceDelayHrs ||
+        settings.retry?.softBounceDelayHours ||
+        2
+      );
     } catch (error) {
       return 2; // Default 2 hours
     }
   }
-  
+
   /**
    * Check if a job has exceeded retry limit
    * @param {Object} job - Email job with retryCount and type
@@ -2178,11 +2298,11 @@ class RulebookService {
     const maxRetries = await this.getMaxRetries(job.type);
     return (job.retryCount || 0) >= maxRetries;
   }
-  
+
   // ========================================
   // DEAD MAIL METHODS
   // ========================================
-  
+
   /**
    * Get dead mail rules configuration
    */
@@ -2190,7 +2310,7 @@ class RulebookService {
     const rulebook = this._cachedRulebook || DEFAULT_RULEBOOK;
     return rulebook.deadMailRules;
   }
-  
+
   /**
    * Check if a job failure should trigger dead mail status
    * @param {Object} job - The email job
@@ -2199,13 +2319,20 @@ class RulebookService {
    */
   async shouldMarkAsDead(job, eventType) {
     // Terminal failure events that should trigger dead mail check
-    const terminalFailureEvents = ['hard_bounce', 'blocked', 'invalid', 'error', 'complaint', 'unsubscribed'];
-    
+    const terminalFailureEvents = [
+      "hard_bounce",
+      "blocked",
+      "invalid",
+      "error",
+      "complaint",
+      "unsubscribed",
+    ];
+
     // Only check for terminal failure events
     if (!terminalFailureEvents.includes(eventType.toLowerCase())) {
       return false;
     }
-    
+
     // Check if max retries exceeded
     const exceeded = await this.hasExceededRetryLimit(job);
     console.log(
@@ -2213,7 +2340,7 @@ class RulebookService {
     );
     return exceeded;
   }
-  
+
   /**
    * Get mail type priority for scheduling
    * @param {string} type - Email type
@@ -2223,7 +2350,7 @@ class RulebookService {
     const mailType = this.getMailType(type);
     return mailType.priority || 50;
   }
-  
+
   /**
    * Get followup rules
    */
@@ -2231,7 +2358,7 @@ class RulebookService {
     const rulebook = this._cachedRulebook || DEFAULT_RULEBOOK;
     return rulebook.followupRules;
   }
-  
+
   /**
    * Get queue watcher rules
    */
@@ -2239,7 +2366,7 @@ class RulebookService {
     const rulebook = this._cachedRulebook || DEFAULT_RULEBOOK;
     return rulebook.queueWatcherRules;
   }
-  
+
   /**
    * Get mail type permissions for frontend
    * Returns a simplified object for frontend use
@@ -2247,7 +2374,7 @@ class RulebookService {
   getMailTypePermissions() {
     const rulebook = this._cachedRulebook || DEFAULT_RULEBOOK;
     const permissions = {};
-    
+
     for (const [key, mailType] of Object.entries(rulebook.mailTypes)) {
       permissions[key] = {
         id: mailType.id,
@@ -2257,15 +2384,15 @@ class RulebookService {
         canSkip: mailType.canSkip || false,
         canCancel: mailType.canCancel || false,
         canPause: mailType.canPause || false,
-        canResume: mailType.canPause || false,  // Resume allowed if pause allowed
+        canResume: mailType.canPause || false, // Resume allowed if pause allowed
         canRetry: mailType.canRetry || false,
-        canReschedule: mailType.canReschedule || false
+        canReschedule: mailType.canReschedule || false,
       };
     }
-    
+
     return permissions;
   }
-  
+
   /**
    * Get status definitions for frontend
    */
@@ -2273,12 +2400,12 @@ class RulebookService {
     const rulebook = this._cachedRulebook || DEFAULT_RULEBOOK;
     return rulebook.statuses;
   }
-  
+
   // ========================================
   // STATUS GROUP GETTERS
   // Use these methods instead of hardcoding status arrays!
   // ========================================
-  
+
   /**
    * Get active/pending statuses (jobs waiting to be sent)
    * Use in queries: status: { in: RulebookService.getActiveStatuses() }
@@ -2286,133 +2413,133 @@ class RulebookService {
   getActiveStatuses() {
     return [...DEFAULT_RULEBOOK.statusGroups.active];
   }
-  
+
   /**
    * Get failure statuses
    */
   getFailureStatuses() {
     return [...DEFAULT_RULEBOOK.statusGroups.failure];
   }
-  
+
   /**
    * Get hard failure statuses (cannot retry)
    */
   getHardFailureStatuses() {
     return [...DEFAULT_RULEBOOK.statusGroups.hardFailure];
   }
-  
+
   /**
    * Get soft failure statuses (can retry)
    */
   getSoftFailureStatuses() {
     return [...DEFAULT_RULEBOOK.statusGroups.softFailure];
   }
-  
+
   /**
    * Get cancellable statuses
    */
   getCancellableStatuses() {
     return [...DEFAULT_RULEBOOK.statusGroups.cancellable];
   }
-  
+
   /**
    * Get reschedulable statuses
    */
   getReschedulableStatuses() {
     return [...DEFAULT_RULEBOOK.statusGroups.reschedulable];
   }
-  
+
   /**
    * Get terminal statuses (job complete)
    */
   getTerminalStatuses() {
     return [...DEFAULT_RULEBOOK.statusGroups.terminal];
   }
-  
+
   /**
    * Get in-progress statuses
    */
   getInProgressStatuses() {
     return [...DEFAULT_RULEBOOK.statusGroups.inProgress];
   }
-  
+
   /**
    * Get existing non-cancelled statuses (for duplicate checking)
    */
   getExistingNonCancelledStatuses() {
     return [...DEFAULT_RULEBOOK.statusGroups.existingNonCancelled];
   }
-  
+
   /**
    * Get engagement statuses
    */
   getEngagementStatuses() {
     return [...DEFAULT_RULEBOOK.statusGroups.engagement];
   }
-  
+
   /**
    * Get show in queue statuses
    */
   getShowInQueueStatuses() {
     return [...DEFAULT_RULEBOOK.statusGroups.showInQueue];
   }
-  
+
   /**
    * Get processed statuses (for metrics)
    */
   getProcessedStatuses() {
     return [...DEFAULT_RULEBOOK.statusGroups.processed];
   }
-  
+
   /**
    * Get retriable statuses (terminal failures that can be manually retried)
    */
   getRetriableStatuses() {
     return [...DEFAULT_RULEBOOK.statusGroups.retriable];
   }
-  
+
   /**
    * Get pending only statuses (for email queue filtering)
    */
   getPendingOnlyStatuses() {
     return [...DEFAULT_RULEBOOK.statusGroups.pendingOnly];
   }
-  
+
   /**
    * Get completed/history statuses (for showing in completed email list)
    */
   getCompletedHistoryStatuses() {
     return [...DEFAULT_RULEBOOK.statusGroups.completedHistory];
   }
-  
+
   /**
    * Get awaiting delivery statuses (for handlers that need to cancel pending jobs)
    */
   getAwaitingDeliveryStatuses() {
     return [...DEFAULT_RULEBOOK.statusGroups.awaitingDelivery];
   }
-  
+
   /**
    * Get successfully sent statuses (sent, delivered, opened, clicked)
    */
   getSuccessfullySentStatuses() {
     return [...DEFAULT_RULEBOOK.statusGroups.successfullySent];
   }
-  
+
   /**
    * Get sent not terminal statuses (alias for successfullySent)
    */
   getSentNotTerminalStatuses() {
     return [...DEFAULT_RULEBOOK.statusGroups.sentNotTerminal];
   }
-  
+
   /**
    * Get all statuses except cancelled and skipped (for analytics)
    */
   getAllExceptCancelledSkippedStatuses() {
     return [...DEFAULT_RULEBOOK.statusGroups.allExceptCancelledSkipped];
   }
-  
+
   /**
    * Check if a status is in a specific group
    */
@@ -2420,209 +2547,224 @@ class RulebookService {
     const group = DEFAULT_RULEBOOK.statusGroups[groupName];
     return group ? group.includes(status) : false;
   }
-  
+
   /**
    * Check if status is a failure status
    */
   isFailureStatus(status) {
-    return this.isStatusInGroup(status, 'failure');
+    return this.isStatusInGroup(status, "failure");
   }
-  
+
   /**
    * Check if status is active/pending
    */
   isActiveStatus(status) {
-    return this.isStatusInGroup(status, 'active');
+    return this.isStatusInGroup(status, "active");
   }
-  
+
   /**
    * Check if status is terminal
    */
   isTerminal(status) {
-    return this.isStatusInGroup(status, 'terminal');
+    return this.isStatusInGroup(status, "terminal");
   }
-  
+
   // ========================================
   // LEAD STATUS RESOLVER
   // Single Source of Truth for determining lead status
   // Called after ANY job state change
   // ========================================
-  
+
   /**
    * Find the next scheduled job for a lead
    * Used to determine lead status after job cancellation/completion
-   * @param {number} leadId 
+   * @param {number} leadId
    * @returns {Promise<Object|null>} The next scheduled job or null
    */
   async findNextScheduledJob(leadId) {
     const activeStatuses = this.getActiveStatuses();
-    
+
     const nextJob = await prisma.emailJob.findFirst({
       where: {
         leadId: parseInt(leadId),
-        status: { in: activeStatuses }
+        status: { in: activeStatuses },
       },
-      orderBy: [
-        { scheduledFor: 'asc' }
-      ],
+      orderBy: [{ scheduledFor: "asc" }],
       select: {
         id: true,
         type: true,
         status: true,
         scheduledFor: true,
-        metadata: true
-      }
+        metadata: true,
+      },
     });
-    
+
     return nextJob;
   }
-  
+
   /**
    * LEAD STATUS RESOLVER
    * Single Source of Truth for determining what a lead's status should be
    * Called after ANY job state change to ensure lead status reflects reality
-   * 
+   *
    * Priority Order:
    * 1. Forced status (frozen, converted) - highest priority
    * 2. Active scheduled job (pending, queued, scheduled, rescheduled)
    * 3. Last successfully sent job
    * 4. Failure state (if last action was failure)
    * 5. idle (default fallback)
-   * 
+   *
    * @param {number} leadId - Lead to resolve status for
    * @param {Object} options - { forcedStatus?, skipJobLookup? }
    * @returns {Promise<{status: string, reason: string, job?: Object}>}
    */
   async resolveLeadStatus(leadId, options = {}) {
     const { forcedStatus, skipJobLookup = false } = options;
-    
+
     // Priority 1: Forced status (frozen, converted)
     if (forcedStatus) {
       return {
         status: forcedStatus,
-        reason: `Forced status: ${forcedStatus}`
+        reason: `Forced status: ${forcedStatus}`,
       };
     }
-    
+
     // Check lead special states
     const lead = await prisma.lead.findUnique({
       where: { id: parseInt(leadId) },
-      select: { 
-        status: true, 
+      select: {
+        status: true,
         frozenUntil: true,
-        followupsPaused: true
-      }
+        followupsPaused: true,
+      },
     });
-    
+
     if (!lead) {
-      return { status: 'idle', reason: 'Lead not found' };
+      return { status: "idle", reason: "Lead not found" };
     }
-    
+
     // Check frozen state
     if (lead.frozenUntil && new Date(lead.frozenUntil) > new Date()) {
-      return { status: 'frozen', reason: 'Lead is frozen' };
+      return { status: "frozen", reason: "Lead is frozen" };
     }
-    
+
     // Check converted state
-    if (lead.status === 'converted') {
-      return { status: 'converted', reason: 'Lead is converted' };
+    if (lead.status === "converted") {
+      return { status: "converted", reason: "Lead is converted" };
     }
-    
+
     // Priority 2: Find next scheduled job
     if (!skipJobLookup) {
       const nextJob = await this.findNextScheduledJob(leadId);
-      
+
       if (nextJob) {
-        const isRescheduled = nextJob.status === 'rescheduled' || 
-                              nextJob.metadata?.rescheduled || 
-                              nextJob.metadata?.retryReason;
-        const statusWord = isRescheduled ? 'rescheduled' : 'scheduled';
-        
+        const isRescheduled =
+          nextJob.status === "rescheduled" ||
+          nextJob.metadata?.rescheduled ||
+          nextJob.metadata?.retryReason;
+        const statusWord = isRescheduled ? "rescheduled" : "scheduled";
+
         // Check if conditional email - use special format
-        if (this.isConditional(nextJob.type) && nextJob.metadata?.triggerEvent) {
-          const formattedStatus = this.formatConditionalStatus(nextJob.metadata.triggerEvent, statusWord);
+        if (
+          this.isConditional(nextJob.type) &&
+          nextJob.metadata?.triggerEvent
+        ) {
+          const formattedStatus = this.formatConditionalStatus(
+            nextJob.metadata.triggerEvent,
+            statusWord,
+          );
           return {
             status: formattedStatus,
             reason: `Has scheduled conditional: ${nextJob.type}`,
-            job: nextJob
+            job: nextJob,
           };
         }
-        
-        const typeName = this.getSimplifiedTypeName(nextJob.type, nextJob.metadata);
-        
+
+        const typeName = this.getSimplifiedTypeName(
+          nextJob.type,
+          nextJob.metadata,
+        );
+
         return {
           status: `${typeName}:${statusWord}`,
           reason: `Has scheduled job: ${nextJob.type}`,
-          job: nextJob
+          job: nextJob,
         };
       }
     }
-    
+
     // Priority 3: Check for last sent job
     const lastSentJob = await prisma.emailJob.findFirst({
       where: {
         leadId: parseInt(leadId),
-        status: { in: this.getSuccessfullySentStatuses() }
+        status: { in: this.getSuccessfullySentStatuses() },
       },
-      orderBy: { sentAt: 'desc' },
-      select: { id: true, type: true, status: true }
+      orderBy: { sentAt: "desc" },
+      select: { id: true, type: true, status: true },
     });
-    
+
     if (lastSentJob) {
       // Check if sequence is complete
       const settings = await prisma.settings.findFirst();
-      const sequence = (settings?.followups || []).filter(f => f.enabled && !f.globallySkipped);
-      
+      const sequence = (settings?.followups || []).filter(
+        (f) => f.enabled && !f.globallySkipped,
+      );
+
       if (sequence.length > 0) {
         // Check if all sequence steps are completed
         const completedTypes = await prisma.emailJob.findMany({
           where: {
             leadId: parseInt(leadId),
-            status: { in: this.getSuccessfullySentStatuses() }
+            status: { in: this.getSuccessfullySentStatuses() },
           },
           select: { type: true },
-          distinct: ['type']
+          distinct: ["type"],
         });
-        
-        const completedTypeNames = completedTypes.map(j => j.type);
-        const allComplete = sequence.every(step => 
-          completedTypeNames.some(t => t.toLowerCase().includes(step.name.toLowerCase()))
+
+        const completedTypeNames = completedTypes.map((j) => j.type);
+        const allComplete = sequence.every((step) =>
+          completedTypeNames.some((t) =>
+            t.toLowerCase().includes(step.name.toLowerCase()),
+          ),
         );
-        
+
         if (allComplete) {
-          return { status: 'sequence_complete', reason: 'All sequence steps completed' };
+          return {
+            status: "sequence_complete",
+            reason: "All sequence steps completed",
+          };
         }
       }
-      
+
       // Show last sent status
       const typeName = this.getSimplifiedTypeName(lastSentJob.type);
       return {
         status: `${typeName}:sent`,
         reason: `Last sent: ${lastSentJob.type}`,
-        job: lastSentJob
+        job: lastSentJob,
       };
     }
-    
+
     // Priority 4: Default to idle
-    return { status: 'idle', reason: 'No scheduled or sent jobs found' };
+    return { status: "idle", reason: "No scheduled or sent jobs found" };
   }
-  
+
   // ========================================
   // ACTION IMPACT GETTERS
   // ========================================
-  
+
   /**
    * Get action impact configuration
    */
   getActionImpact(actionName) {
     return DEFAULT_RULEBOOK.actionImpacts[actionName] || null;
   }
-  
+
   // ========================================
   // ACTION EXECUTORS
   // Execute actions with ALL side effects
   // ========================================
-  
+
   /**
    * Execute job cancellation with all side effects
    * @param {number} jobId - Job to cancel
@@ -2631,28 +2773,38 @@ class RulebookService {
    * @param {Object} context - { higherPriorityJobId?, triggeredBy? }
    * @returns {Promise<{success: boolean, newLeadStatus?: string, nextJob?: Object, error?: string}>}
    */
-  async executeCancelJob(jobId, reason = 'User cancelled', isManual = true, context = {}) {
-    const impactKey = isManual ? 'cancelJobManual' : 'cancelJobDynamic';
+  async executeCancelJob(
+    jobId,
+    reason = "User cancelled",
+    isManual = true,
+    context = {},
+  ) {
+    const impactKey = isManual ? "cancelJobManual" : "cancelJobDynamic";
     const impact = this.getActionImpact(impactKey);
-    
+
     try {
-      console.log(`[RulebookAction] ${impactKey} started for job ${jobId}: ${reason}`);
-      
+      console.log(
+        `[RulebookAction] ${impactKey} started for job ${jobId}: ${reason}`,
+      );
+
       // 1. Get the job
       const job = await prisma.emailJob.findUnique({
         where: { id: parseInt(jobId) },
-        include: { lead: true }
+        include: { lead: true },
       });
-      
+
       if (!job) {
-        return { success: false, error: 'Job not found' };
+        return { success: false, error: "Job not found" };
       }
-      
+
       // Check if cancellable
       if (!this.getCancellableStatuses().includes(job.status)) {
-        return { success: false, error: `Cannot cancel job with status: ${job.status}` };
+        return {
+          success: false,
+          error: `Cannot cancel job with status: ${job.status}`,
+        };
       }
-      
+
       // 2. Update job status
       await prisma.emailJob.update({
         where: { id: parseInt(jobId) },
@@ -2663,41 +2815,48 @@ class RulebookService {
             ...(job.metadata || {}),
             cancelledAt: new Date().toISOString(),
             cancelReason: reason,
-            cancelledBy: isManual ? 'user' : 'system',
-            ...(context.higherPriorityJobId && { supersededBy: context.higherPriorityJobId })
-          }
-        }
+            cancelledBy: isManual ? "user" : "system",
+            ...(context.higherPriorityJobId && {
+              supersededBy: context.higherPriorityJobId,
+            }),
+          },
+        },
       });
-      
+
       // 3. Remove from BullMQ queue if exists
       if (impact.removeFromQueue && job.metadata?.queueJobId) {
         try {
-          const { emailSendQueue } = require('../queues/emailQueues');
+          const { emailSendQueue } = require("../queues/emailQueues");
           const queueJob = await emailSendQueue.getJob(job.metadata.queueJobId);
           if (queueJob) await queueJob.remove();
         } catch (err) {
-          console.warn(`[RulebookAction] Could not remove from queue:`, err.message);
+          console.warn(
+            `[RulebookAction] Could not remove from queue:`,
+            err.message,
+          );
         }
       }
-      
+
       // 4. Resolve lead status (for manual cancellation)
       let newLeadStatus = null;
       let nextJob = null;
-      
+
       if (impact.updateLeadStatus && impact.lookForNextScheduledJob) {
         const resolved = await this.resolveLeadStatus(job.leadId);
         newLeadStatus = resolved.status;
         nextJob = resolved.job;
-        
+
         // Update lead status
         await prisma.lead.update({
           where: { id: job.leadId },
-          data: { status: newLeadStatus }
+          data: { status: newLeadStatus },
         });
-        
-        console.log(`[RulebookAction] Lead ${job.leadId} status updated to: ${newLeadStatus}`);
+
+        console.log(
+          `[RulebookAction] Lead ${job.leadId} status updated to: ${newLeadStatus}`,
+        );
       }
-      
+
       // 5. Create event history
       if (impact.createEventHistory) {
         await prisma.eventHistory.create({
@@ -2710,51 +2869,52 @@ class RulebookService {
               jobType: job.type,
               reason: reason,
               newLeadStatus: newLeadStatus,
-              ...(context.higherPriorityJobId && { higherPriorityJobId: context.higherPriorityJobId })
+              ...(context.higherPriorityJobId && {
+                higherPriorityJobId: context.higherPriorityJobId,
+              }),
             },
-            emailType: job.type
-          }
+            emailType: job.type,
+          },
         });
       }
-      
+
       console.log(`[RulebookAction] ${impactKey} completed for job ${jobId}`);
-      
+
       return {
         success: true,
         newLeadStatus,
         nextJob,
         jobId: job.id,
-        leadId: job.leadId
+        leadId: job.leadId,
       };
-      
     } catch (error) {
       console.error(`[RulebookAction] ${impactKey} failed:`, error);
       return { success: false, error: error.message };
     }
   }
-  
+
   /**
    * Execute skip job with all side effects
    * @param {number} jobId - Job to skip
    * @param {string} reason - Why being skipped
    * @returns {Promise<{success: boolean, newLeadStatus?: string, error?: string}>}
    */
-  async executeSkipJob(jobId, reason = 'User skipped') {
-    const impact = this.getActionImpact('skipJob');
-    
+  async executeSkipJob(jobId, reason = "User skipped") {
+    const impact = this.getActionImpact("skipJob");
+
     try {
       console.log(`[RulebookAction] skipJob started for job ${jobId}`);
-      
+
       // 1. Get the job
       const job = await prisma.emailJob.findUnique({
         where: { id: parseInt(jobId) },
-        include: { lead: true }
+        include: { lead: true },
       });
-      
+
       if (!job) {
-        return { success: false, error: 'Job not found' };
+        return { success: false, error: "Job not found" };
       }
-      
+
       // 2. Update job status
       await prisma.emailJob.update({
         where: { id: parseInt(jobId) },
@@ -2764,44 +2924,47 @@ class RulebookService {
           metadata: {
             ...(job.metadata || {}),
             skippedAt: new Date().toISOString(),
-            skipReason: reason
-          }
-        }
+            skipReason: reason,
+          },
+        },
       });
-      
+
       // 3. Remove from queue
       if (impact.removeFromQueue && job.metadata?.queueJobId) {
         try {
-          const { emailSendQueue } = require('../queues/emailQueues');
+          const { emailSendQueue } = require("../queues/emailQueues");
           const queueJob = await emailSendQueue.getJob(job.metadata.queueJobId);
           if (queueJob) await queueJob.remove();
         } catch (err) {
-          console.warn(`[RulebookAction] Could not remove from queue:`, err.message);
+          console.warn(
+            `[RulebookAction] Could not remove from queue:`,
+            err.message,
+          );
         }
       }
-      
+
       // 4. Add to lead's skipped followups
       const currentSkipped = job.lead.skippedFollowups || [];
       if (!currentSkipped.includes(job.type)) {
         await prisma.lead.update({
           where: { id: job.leadId },
           data: {
-            skippedFollowups: [...currentSkipped, job.type]
-          }
+            skippedFollowups: [...currentSkipped, job.type],
+          },
         });
       }
-      
+
       // 5. Schedule next followup (will be handled by scheduler)
       // The scheduler will pick up from where we left off
-      
+
       // 6. Resolve lead status
       const resolved = await this.resolveLeadStatus(job.leadId);
-      
+
       await prisma.lead.update({
         where: { id: job.leadId },
-        data: { status: resolved.status }
+        data: { status: resolved.status },
       });
-      
+
       // 7. Create event history
       if (impact.createEventHistory) {
         await prisma.eventHistory.create({
@@ -2813,39 +2976,38 @@ class RulebookService {
               jobId: job.id,
               jobType: job.type,
               reason: reason,
-              newLeadStatus: resolved.status
+              newLeadStatus: resolved.status,
             },
-            emailType: job.type
-          }
+            emailType: job.type,
+          },
         });
       }
-      
+
       console.log(`[RulebookAction] skipJob completed for job ${jobId}`);
-      
+
       return {
         success: true,
         newLeadStatus: resolved.status,
         jobId: job.id,
-        leadId: job.leadId
+        leadId: job.leadId,
       };
-      
     } catch (error) {
       console.error(`[RulebookAction] skipJob failed:`, error);
       return { success: false, error: error.message };
     }
   }
-  
+
   /**
    * Execute pause followups with all side effects
    * @param {number} leadId - Lead to pause followups for
    * @returns {Promise<{success: boolean, cancelledCount: number, newLeadStatus?: string, error?: string}>}
    */
   async executePauseFollowups(leadId) {
-    const impact = this.getActionImpact('pauseFollowups');
-    
+    const impact = this.getActionImpact("pauseFollowups");
+
     try {
       console.log(`[RulebookAction] pauseFollowups started for lead ${leadId}`);
-      
+
       // 1. Find all pending followup jobs (exclude manual, conditional, initial)
       const pendingFollowups = await prisma.emailJob.findMany({
         where: {
@@ -2853,54 +3015,56 @@ class RulebookService {
           status: { in: this.getActiveStatuses() },
           NOT: {
             OR: [
-              { type: { contains: 'initial', mode: 'insensitive' } },
-              { type: { contains: 'manual', mode: 'insensitive' } },
-              { type: { startsWith: 'conditional:' } }
-            ]
-          }
-        }
+              { type: { contains: "initial", mode: "insensitive" } },
+              { type: { contains: "manual", mode: "insensitive" } },
+              { type: { startsWith: "conditional:" } },
+            ],
+          },
+        },
       });
-      
+
       // 2. Cancel each followup job
       for (const job of pendingFollowups) {
         await prisma.emailJob.update({
           where: { id: job.id },
           data: {
             status: impact.jobStatusChange,
-            lastError: 'Followups paused by user',
+            lastError: "Followups paused by user",
             metadata: {
               ...(job.metadata || {}),
-              pausedAt: new Date().toISOString()
-            }
-          }
+              pausedAt: new Date().toISOString(),
+            },
+          },
         });
-        
+
         // Remove from queue
         if (job.metadata?.queueJobId) {
           try {
-            const { emailSendQueue } = require('../queues/emailQueues');
-            const queueJob = await emailSendQueue.getJob(job.metadata.queueJobId);
+            const { emailSendQueue } = require("../queues/emailQueues");
+            const queueJob = await emailSendQueue.getJob(
+              job.metadata.queueJobId,
+            );
             if (queueJob) await queueJob.remove();
           } catch (err) {
             // Ignore queue removal errors
           }
         }
       }
-      
+
       // 3. Set lead flag
       await prisma.lead.update({
         where: { id: parseInt(leadId) },
-        data: { followupsPaused: true }
+        data: { followupsPaused: true },
       });
-      
+
       // 4. Resolve lead status (check for manual/conditional jobs)
       const resolved = await this.resolveLeadStatus(leadId);
-      
+
       await prisma.lead.update({
         where: { id: parseInt(leadId) },
-        data: { status: resolved.status }
+        data: { status: resolved.status },
       });
-      
+
       // 5. Create event history
       if (impact.createEventHistory) {
         await prisma.eventHistory.create({
@@ -2909,46 +3073,52 @@ class RulebookService {
             event: impact.eventType,
             timestamp: new Date(),
             details: {
-              cancelledJobs: pendingFollowups.map(j => ({ id: j.id, type: j.type })),
+              cancelledJobs: pendingFollowups.map((j) => ({
+                id: j.id,
+                type: j.type,
+              })),
               cancelledCount: pendingFollowups.length,
-              newLeadStatus: resolved.status
-            }
-          }
+              newLeadStatus: resolved.status,
+            },
+          },
         });
       }
-      
-      console.log(`[RulebookAction] pauseFollowups completed: ${pendingFollowups.length} jobs cancelled`);
-      
+
+      console.log(
+        `[RulebookAction] pauseFollowups completed: ${pendingFollowups.length} jobs cancelled`,
+      );
+
       return {
         success: true,
         cancelledCount: pendingFollowups.length,
         newLeadStatus: resolved.status,
-        leadId: parseInt(leadId)
+        leadId: parseInt(leadId),
       };
-      
     } catch (error) {
       console.error(`[RulebookAction] pauseFollowups failed:`, error);
       return { success: false, error: error.message };
     }
   }
-  
+
   /**
    * Execute resume followups with all side effects
    * @param {number} leadId - Lead to resume followups for
    * @returns {Promise<{success: boolean, scheduledJob?: Object, error?: string}>}
    */
   async executeResumeFollowups(leadId) {
-    const impact = this.getActionImpact('resumeFollowups');
-    
+    const impact = this.getActionImpact("resumeFollowups");
+
     try {
-      console.log(`[RulebookAction] resumeFollowups started for lead ${leadId}`);
-      
+      console.log(
+        `[RulebookAction] resumeFollowups started for lead ${leadId}`,
+      );
+
       // 1. Clear lead flag
       await prisma.lead.update({
         where: { id: parseInt(leadId) },
-        data: { followupsPaused: false }
+        data: { followupsPaused: false },
       });
-      
+
       // 2. Check for blocking jobs (manual, conditional)
       if (impact.checkForBlockingJobs) {
         const blockingJob = await prisma.emailJob.findFirst({
@@ -2956,44 +3126,49 @@ class RulebookService {
             leadId: parseInt(leadId),
             status: { in: this.getActiveStatuses() },
             OR: [
-              { type: { contains: 'manual', mode: 'insensitive' } },
-              { type: { startsWith: 'conditional:' } }
-            ]
-          }
+              { type: { contains: "manual", mode: "insensitive" } },
+              { type: { startsWith: "conditional:" } },
+            ],
+          },
         });
-        
+
         if (blockingJob) {
-          console.log(`[RulebookAction] Blocking job found: ${blockingJob.type}. Not scheduling followup.`);
-          
+          console.log(
+            `[RulebookAction] Blocking job found: ${blockingJob.type}. Not scheduling followup.`,
+          );
+
           // Update lead status to show blocking job
           const typeName = this.getSimplifiedTypeName(blockingJob.type);
           await prisma.lead.update({
             where: { id: parseInt(leadId) },
-            data: { status: `${typeName}:scheduled` }
+            data: { status: `${typeName}:scheduled` },
           });
-          
+
           return {
             success: true,
             blockingJob: blockingJob,
             newLeadStatus: `${typeName}:scheduled`,
-            leadId: parseInt(leadId)
+            leadId: parseInt(leadId),
           };
         }
       }
-      
+
       // 3. Schedule next followup (handled by EmailSchedulerService)
       // We call it here to ensure proper scheduling
-      const EmailSchedulerService = require('./EmailSchedulerService');
-      const scheduledJob = await EmailSchedulerService.scheduleNextEmail(leadId, 'pending');
-      
+      const EmailSchedulerService = require("./EmailSchedulerService");
+      const scheduledJob = await EmailSchedulerService.scheduleNextEmail(
+        leadId,
+        "pending",
+      );
+
       // 4. Resolve lead status
       const resolved = await this.resolveLeadStatus(leadId);
-      
+
       await prisma.lead.update({
         where: { id: parseInt(leadId) },
-        data: { status: resolved.status }
+        data: { status: resolved.status },
       });
-      
+
       // 5. Create event history
       if (impact.createEventHistory) {
         await prisma.eventHistory.create({
@@ -3002,57 +3177,60 @@ class RulebookService {
             event: impact.eventType,
             timestamp: new Date(),
             details: {
-              scheduledJob: scheduledJob ? { id: scheduledJob.id, type: scheduledJob.type } : null,
-              newLeadStatus: resolved.status
-            }
-          }
+              scheduledJob: scheduledJob
+                ? { id: scheduledJob.id, type: scheduledJob.type }
+                : null,
+              newLeadStatus: resolved.status,
+            },
+          },
         });
       }
-      
+
       console.log(`[RulebookAction] resumeFollowups completed`);
-      
+
       return {
         success: true,
         scheduledJob,
         newLeadStatus: resolved.status,
-        leadId: parseInt(leadId)
+        leadId: parseInt(leadId),
       };
-      
     } catch (error) {
       console.error(`[RulebookAction] resumeFollowups failed:`, error);
       return { success: false, error: error.message };
     }
   }
-  
+
   /**
    * Execute after any job status change to ensure lead status is correct
    * This is a wrapper that should be called after any direct job status updates
-   * @param {number} leadId 
+   * @param {number} leadId
    * @param {string} contextAction - What caused this update
    * @returns {Promise<{status: string}>}
    */
-  async syncLeadStatusAfterJobChange(leadId, contextAction = 'job_update') {
+  async syncLeadStatusAfterJobChange(leadId, contextAction = "job_update") {
     try {
       const resolved = await this.resolveLeadStatus(leadId);
-      
+
       await prisma.lead.update({
         where: { id: parseInt(leadId) },
-        data: { status: resolved.status }
+        data: { status: resolved.status },
       });
-      
-      console.log(`[RulebookAction] Lead ${leadId} status synced to: ${resolved.status} (${contextAction})`);
-      
+
+      console.log(
+        `[RulebookAction] Lead ${leadId} status synced to: ${resolved.status} (${contextAction})`,
+      );
+
       return resolved;
     } catch (error) {
       console.error(`[RulebookAction] syncLeadStatus failed:`, error);
-      return { status: 'idle', reason: 'Error syncing status' };
+      return { status: "idle", reason: "Error syncing status" };
     }
   }
-  
+
   // ========================================
   // PRIORITY & STATUS GROUP HELPERS
   // ========================================
-  
+
   /**
    * Get the priority of a mail type (higher = more important)
    * Used by QueueWatcher to determine which jobs to pause
@@ -3061,27 +3239,34 @@ class RulebookService {
    */
   getMailTypePriority(type) {
     const rulebook = DEFAULT_RULEBOOK;
-    
+
     if (!type) return 0;
-    
+
     const normalizedType = type.toLowerCase();
-    
+
     // Check for conditional prefix
-    if (normalizedType.startsWith('conditional:') || normalizedType === 'conditional') {
+    if (
+      normalizedType.startsWith("conditional:") ||
+      normalizedType === "conditional"
+    ) {
       return rulebook.mailTypes.conditional?.priority || 95;
     }
-    
+
     // Check each mail type for matches
     for (const [key, mailType] of Object.entries(rulebook.mailTypes)) {
-      if (mailType.internalTypes?.some(t => normalizedType.includes(t.toLowerCase()))) {
+      if (
+        mailType.internalTypes?.some((t) =>
+          normalizedType.includes(t.toLowerCase()),
+        )
+      ) {
         return mailType.priority || 0;
       }
     }
-    
+
     // Default to followup priority if unknown
     return rulebook.mailTypes.followup?.priority || 70;
   }
-  
+
   /**
    * Check if a status is resumable (shows Resume button instead of Retry)
    * @param {string} status - The job status
@@ -3091,7 +3276,7 @@ class RulebookService {
     const rulebook = DEFAULT_RULEBOOK;
     return rulebook.statusGroups?.resumable?.includes(status) || false;
   }
-  
+
   /**
    * Check if a status is retriable (shows Retry button, increments count)
    * @param {string} status - The job status
@@ -3101,7 +3286,7 @@ class RulebookService {
     const rulebook = DEFAULT_RULEBOOK;
     return rulebook.statusGroups?.retriable?.includes(status) || false;
   }
-  
+
   /**
    * Check if a status requires manual retry confirmation
    * @param {string} status - The job status
@@ -3111,7 +3296,7 @@ class RulebookService {
     const rulebook = DEFAULT_RULEBOOK;
     return rulebook.statusGroups?.manualRetriable?.includes(status) || false;
   }
-  
+
   /**
    * Get the status group for a given status
    * @param {string} status - The job status
@@ -3120,15 +3305,15 @@ class RulebookService {
   getStatusGroup(status) {
     const rulebook = DEFAULT_RULEBOOK;
     const groups = rulebook.statusGroups || {};
-    
-    if (groups.resumable?.includes(status)) return 'resumable';
-    if (groups.retriable?.includes(status)) return 'retriable';
-    if (groups.manualRetriable?.includes(status)) return 'manualRetriable';
-    if (groups.nonRetriable?.includes(status)) return 'nonRetriable';
-    
-    return 'unknown';
+
+    if (groups.resumable?.includes(status)) return "resumable";
+    if (groups.retriable?.includes(status)) return "retriable";
+    if (groups.manualRetriable?.includes(status)) return "manualRetriable";
+    if (groups.nonRetriable?.includes(status)) return "nonRetriable";
+
+    return "unknown";
   }
-  
+
   /**
    * Check if a mail type triggers auto-resume when completed/cancelled
    * @param {string} type - The mail type
@@ -3136,16 +3321,22 @@ class RulebookService {
    */
   triggersAutoResume(type) {
     const rulebook = DEFAULT_RULEBOOK;
-    const normalizedType = type?.toLowerCase() || '';
-    
+    const normalizedType = type?.toLowerCase() || "";
+
     // Check for conditional prefix
-    if (normalizedType.startsWith('conditional:')) {
-      return rulebook.statusGroups?.triggersAutoResume?.includes('conditional') || false;
+    if (normalizedType.startsWith("conditional:")) {
+      return (
+        rulebook.statusGroups?.triggersAutoResume?.includes("conditional") ||
+        false
+      );
     }
-    
-    return rulebook.statusGroups?.triggersAutoResume?.includes(normalizedType) || false;
+
+    return (
+      rulebook.statusGroups?.triggersAutoResume?.includes(normalizedType) ||
+      false
+    );
   }
-  
+
   /**
    * Check if a status should trigger auto-resume of paused jobs
    * @param {string} status - The job status
@@ -3154,6 +3345,458 @@ class RulebookService {
   shouldTriggerAutoResume(status) {
     const rulebook = DEFAULT_RULEBOOK;
     return rulebook.statusGroups?.autoResumeOnStatus?.includes(status) || false;
+  }
+
+  // ========================================
+  // PRIORITY-BASED PAUSE/RESUME METHODS
+  // Core methods for handling mail priority hierarchy
+  // ========================================
+
+  /**
+   * Get the priority value for a mail type
+   * Higher number = higher priority
+   * @param {string} type - The mail type (e.g., 'conditional:Clicked', 'manual', 'First Followup')
+   * @returns {number} Priority value
+   */
+  getMailTypePriority(type) {
+    if (!type) return 70; // Default to followup priority
+
+    const rulebook = this._cachedRulebook || DEFAULT_RULEBOOK;
+    const priorities = rulebook.queueWatcherRules?.priorityScheduling
+      ?.priorities || {
+      conditional: 100,
+      manual: 90,
+      initial: 80,
+      followup: 70,
+    };
+
+    const t = type.toLowerCase();
+
+    // Check type prefixes
+    if (t.startsWith("conditional:") || t.startsWith("conditional"))
+      return priorities.conditional;
+    if (t === "manual" || t.includes("manual")) return priorities.manual;
+    if (t === "initial" || t.includes("initial")) return priorities.initial;
+
+    // Default to followup for anything else
+    return priorities.followup;
+  }
+
+  /**
+   * Get the mail types that should be paused when scheduling a higher priority mail type
+   * @param {string} schedulingType - The mail type being scheduled
+   * @returns {string[]} Array of mail type categories to pause (e.g., ['followup', 'manual'])
+   */
+  getTypesToPauseFor(schedulingType) {
+    if (!schedulingType) return [];
+
+    const t = schedulingType.toLowerCase();
+
+    // Conditional pauses both followups and manual mails
+    if (t.startsWith("conditional:") || t.startsWith("conditional")) {
+      return ["followup", "manual"];
+    }
+
+    // Manual pauses only followups
+    if (t === "manual" || t.includes("manual")) {
+      return ["followup"];
+    }
+
+    // Initial doesn't pause anything
+    // Followups don't pause anything
+    return [];
+  }
+
+  /**
+   * CRITICAL: Pause all lower-priority pending jobs for a lead when scheduling a high-priority mail
+   * Updates job status to 'paused' (NOT cancelled) and removes from BullMQ queue
+   *
+   * @param {number} leadId - The lead ID
+   * @param {string} schedulingType - The high-priority mail type being scheduled (e.g., 'conditional:Opened', 'manual')
+   * @returns {Promise<{pausedCount: number, pausedJobs: Array}>} Result with count and paused job details
+   */
+  async pauseLowerPriorityJobs(leadId, schedulingType) {
+    const typesToPause = this.getTypesToPauseFor(schedulingType);
+
+    if (typesToPause.length === 0) {
+      console.log(
+        `[RulebookService] No mail types to pause for ${schedulingType}`,
+      );
+      return { pausedCount: 0, pausedJobs: [] };
+    }
+
+    console.log(
+      `[RulebookService] Pausing ${typesToPause.join(", ")} jobs for lead ${leadId} due to ${schedulingType}`,
+    );
+
+    // Build query conditions for types to pause
+    const typeConditions = typesToPause
+      .map((t) => {
+        if (t === "followup") {
+          return { type: { contains: "Followup" } };
+        } else if (t === "manual") {
+          return { type: { equals: "manual" } };
+        }
+        return null;
+      })
+      .filter(Boolean);
+
+    // Also add lowercase checks for different naming conventions
+    const allTypeConditions = [
+      ...typeConditions,
+      ...typesToPause
+        .map((t) => {
+          if (t === "followup") {
+            return { type: { contains: "followup" } };
+          }
+          return null;
+        })
+        .filter(Boolean),
+    ];
+
+    // Find pending jobs that should be paused
+    const pendingStatuses = [
+      "pending",
+      "queued",
+      "scheduled",
+      "rescheduled",
+      "deferred",
+    ];
+
+    const jobsToPause = await prisma.emailJob.findMany({
+      where: {
+        leadId: parseInt(leadId),
+        status: { in: pendingStatuses },
+        OR: allTypeConditions.length > 0 ? allTypeConditions : undefined,
+      },
+    });
+
+    if (jobsToPause.length === 0) {
+      console.log(
+        `[RulebookService] No pending jobs to pause for lead ${leadId}`,
+      );
+      return { pausedCount: 0, pausedJobs: [] };
+    }
+
+    console.log(`[RulebookService] Found ${jobsToPause.length} jobs to pause`);
+
+    // Remove from BullMQ queues
+    const { emailSendQueue, followupQueue } = require("../queues/emailQueues");
+
+    for (const job of jobsToPause) {
+      if (job.metadata?.queueJobId) {
+        try {
+          // Try both queues
+          let bullJob = await emailSendQueue.getJob(job.metadata.queueJobId);
+          if (bullJob) {
+            await bullJob.remove();
+            console.log(
+              `[RulebookService] Removed job ${job.id} from emailSendQueue`,
+            );
+          } else {
+            bullJob = await followupQueue.getJob(job.metadata.queueJobId);
+            if (bullJob) {
+              await bullJob.remove();
+              console.log(
+                `[RulebookService] Removed job ${job.id} from followupQueue`,
+              );
+            }
+          }
+        } catch (err) {
+          console.warn(
+            `[RulebookService] Failed to remove job ${job.id} from queue:`,
+            err.message,
+          );
+        }
+      }
+    }
+
+    // Update job statuses to 'paused' (NOT cancelled!)
+    const pauseResult = await prisma.emailJob.updateMany({
+      where: {
+        id: { in: jobsToPause.map((j) => j.id) },
+      },
+      data: {
+        status: "paused",
+        lastError: `Auto-paused for higher priority ${schedulingType} mail`,
+        metadata: {
+          pausedAt: new Date().toISOString(),
+          pausedByMailType: schedulingType,
+          previousStatus: "pending", // Will be used to restore on resume
+        },
+      },
+    });
+
+    console.log(
+      `[RulebookService] ✓ Paused ${pauseResult.count} jobs for lead ${leadId}`,
+    );
+
+    // Emit batch event for all paused jobs (more efficient than individual events)
+    const EventBus = require("../events/EventBus");
+    if (jobsToPause.length > 0) {
+      await EventBus.emit("jobs.paused.batch", {
+        leadId: leadId,
+        jobIds: jobsToPause.map(j => j.id),
+        reason: `Paused for ${schedulingType}`,
+        pausedByMailType: schedulingType,
+        count: jobsToPause.length
+      });
+    }
+
+    return {
+      pausedCount: pauseResult.count,
+      pausedJobs: jobsToPause.map((j) => ({ id: j.id, type: j.type })),
+    };
+  }
+
+  /**
+   * CRITICAL: Resume paused jobs after a high-priority mail completes or is cancelled
+   * Called when conditional/manual mail is delivered/cancelled
+   *
+   * @param {number} leadId - The lead ID
+   * @param {string} completedType - The high-priority mail type that just completed
+   * @param {string} completedStatus - The status that triggered resume (e.g., 'delivered', 'cancelled')
+   * @returns {Promise<{resumedCount: number}>} Result with count of resumed jobs
+   */
+  async resumePausedJobsAfter(
+    leadId,
+    completedType,
+    completedStatus = "delivered",
+  ) {
+    console.log(
+      `[RulebookService] Checking for paused jobs to resume after ${completedType} -> ${completedStatus}`,
+    );
+
+    // ==========================================
+    // CRITICAL SAFETY CHECK: Terminal State Guard
+    // No jobs should EVER resume if lead is in terminal state
+    // This is the PRIMARY guard against invalid resumes
+    // ==========================================
+    const lead = await prisma.lead.findUnique({
+      where: { id: parseInt(leadId) },
+      select: { 
+        terminalState: true, 
+        status: true,
+        isInFailure: true  // If this field exists
+      }
+    });
+    
+    if (!lead) {
+      console.log(`[RulebookService] Lead ${leadId} not found, cannot resume`);
+      return { resumedCount: 0, blocked: true, reason: 'lead_not_found' };
+    }
+    
+    // Block resume if in terminal state (dead, unsubscribed, complaint)
+    if (lead.terminalState) {
+      console.log(`[RulebookService] ⛔ Lead ${leadId} is in terminal state (${lead.terminalState}), BLOCKING resume`);
+      return { resumedCount: 0, blocked: true, reason: 'terminal_state', terminalState: lead.terminalState };
+    }
+    
+    // Block resume if lead is marked as in failure (requires manual intervention)
+    if (lead.isInFailure) {
+      console.log(`[RulebookService] ⛔ Lead ${leadId} is in failure state, BLOCKING resume - manual retry required`);
+      return { resumedCount: 0, blocked: true, reason: 'in_failure' };
+    }
+    
+    // Block resume if status indicates failure (backup check)
+    const failureStatuses = this.getFailureStatuses();
+    const statusPart = lead.status?.includes(':') ? lead.status.split(':')[1] : lead.status;
+    if (failureStatuses.includes(statusPart)) {
+      console.log(`[RulebookService] ⛔ Lead ${leadId} has failure status (${lead.status}), BLOCKING resume`);
+      return { resumedCount: 0, blocked: true, reason: 'failure_status' };
+    }
+    // ==========================================
+
+    // First, check if this mail type triggers auto-resume
+    if (!this.triggersAutoResume(completedType)) {
+      console.log(
+        `[RulebookService] ${completedType} does not trigger auto-resume`,
+      );
+      return { resumedCount: 0 };
+    }
+
+    // Check if the status triggers auto-resume
+    if (!this.shouldTriggerAutoResume(completedStatus)) {
+      console.log(
+        `[RulebookService] Status ${completedStatus} does not trigger auto-resume`,
+      );
+      return { resumedCount: 0 };
+    }
+
+    // Find paused jobs for this lead
+    const pausedJobs = await prisma.emailJob.findMany({
+      where: {
+        leadId: parseInt(leadId),
+        status: "paused",
+      },
+      orderBy: { scheduledFor: "asc" }, // Resume in order
+    });
+
+    if (pausedJobs.length === 0) {
+      console.log(
+        `[RulebookService] No paused jobs to resume for lead ${leadId}`,
+      );
+      return { resumedCount: 0 };
+    }
+
+    console.log(
+      `[RulebookService] Found ${pausedJobs.length} paused job(s) to resume`,
+    );
+
+    // Before resuming, check if there's STILL a higher-priority active job
+    // (e.g., conditional completed but manual is still pending)
+    const higherPriorityActive = await prisma.emailJob.findFirst({
+      where: {
+        leadId: parseInt(leadId),
+        status: { in: ["pending", "queued", "scheduled", "rescheduled"] },
+        NOT: { id: { in: pausedJobs.map((j) => j.id) } },
+      },
+    });
+
+    if (higherPriorityActive) {
+      const activePriority = this.getMailTypePriority(
+        higherPriorityActive.type,
+      );
+      const firstPausedPriority = this.getMailTypePriority(pausedJobs[0].type);
+
+      if (activePriority > firstPausedPriority) {
+        console.log(
+          `[RulebookService] Higher priority job still active (${higherPriorityActive.type}), keeping paused jobs paused`,
+        );
+        return { resumedCount: 0 };
+      }
+    }
+
+    // Resume jobs - reschedule with fresh times
+    const { SettingsRepository } = require("../repositories");
+    const EmailSchedulerService = require("./EmailSchedulerService");
+    const settings = await SettingsRepository.getSettings();
+
+    let resumedCount = 0;
+
+    for (const job of pausedJobs) {
+      try {
+        // Get lead for timezone
+        const lead = await prisma.lead.findUnique({
+          where: { id: job.leadId },
+        });
+        if (!lead) continue;
+
+        // Find next available slot from now
+        const slotResult = await EmailSchedulerService.findNextAvailableSlot(
+          lead.timezone || "UTC",
+          new Date(), // Start from now
+          settings,
+        );
+
+        if (!slotResult.success) {
+          console.warn(
+            `[RulebookService] Could not find slot for resumed job ${job.id}: ${slotResult.reason}`,
+          );
+          continue;
+        }
+
+        // Update job with new schedule and pending status
+        await prisma.emailJob.update({
+          where: { id: job.id },
+          data: {
+            status: "pending",
+            scheduledFor: slotResult.scheduledTime,
+            lastError: null,
+            metadata: {
+              ...job.metadata,
+              resumedAt: new Date().toISOString(),
+              resumedAfter: completedType,
+            },
+          },
+        });
+
+        // Re-add to queue
+        const { followupQueue } = require("../queues/emailQueues");
+        const delay = Math.max(
+          0,
+          slotResult.scheduledTime.getTime() - Date.now(),
+        );
+
+        const bullJob = await followupQueue.add(
+          "sendEmail",
+          { leadId: job.leadId, emailJobId: job.id, type: job.type },
+          { delay, jobId: `resumed-${job.id}-${Date.now()}` },
+        );
+
+        // Update metadata with new queue job ID
+        await prisma.emailJob.update({
+          where: { id: job.id },
+          data: {
+            metadata: {
+              ...job.metadata,
+              queueJobId: bullJob.id,
+              resumedAt: new Date().toISOString(),
+            },
+          },
+        });
+
+        console.log(
+          `[RulebookService] ✓ Resumed job ${job.id} (${job.type}) scheduled for ${slotResult.scheduledTime}`,
+        );
+        resumedCount++;
+      } catch (err) {
+        console.error(
+          `[RulebookService] Failed to resume job ${job.id}:`,
+          err.message,
+        );
+      }
+    }
+
+    console.log(
+      `[RulebookService] ✓ Resumed ${resumedCount} of ${pausedJobs.length} paused jobs`,
+    );
+
+    // Update lead status if jobs were resumed
+    if (resumedCount > 0) {
+      await this.syncLeadStatusAfterJobChange(leadId, "jobs_resumed");
+    }
+
+    return { resumedCount };
+  }
+  
+  /**
+   * Get the priority value for a job/lead status
+   * Higher number = higher priority (won't be overwritten by lower priority)
+   * @param {string} status - The status to get priority for
+   * @returns {number} Priority value (0-100)
+   */
+  getStatusPriority(status) {
+    const s = (status || '').toLowerCase();
+    
+    // Terminal states - highest priority (never overwrite)
+    if (['converted', 'unsubscribed'].includes(s)) return 100;
+    
+    // Frozen/Dead - very high priority
+    if (['frozen', 'dead'].includes(s)) return 95;
+    
+    // Paused - high priority (temporary but important)
+    if (['paused'].includes(s)) return 90;
+    
+    // Active scheduled states - high priority (current work)
+    if (['scheduled', 'rescheduled', 'queued', 'pending'].includes(s)) return 85;
+    
+    // Failure states - high priority (need attention)
+    if (this.getFailureStatuses().includes(s)) return 80;
+    
+    // Engagement events - medium priority (good news)
+    if (['clicked'].includes(s)) return 40;
+    if (['opened', 'unique_opened'].includes(s)) return 35;
+    if (['delivered'].includes(s)) return 30;
+    if (['sent'].includes(s)) return 25;
+    
+    // Skipped/cancelled - low priority
+    if (['skipped', 'cancelled'].includes(s)) return 20;
+    
+    // Idle/unknown - lowest priority
+    if (['idle'].includes(s)) return 10;
+    
+    return 0;
   }
 }
 

@@ -114,21 +114,23 @@ class ConditionalEmailService {
     const scheduledFor = slotResult.scheduledTime;
     console.log(`[ConditionalEmail] Delay ${delayHours}h -> Scheduled at ${moment(scheduledFor).format('YYYY-MM-DD HH:mm')} (slot: ${slotResult.slotInfo?.available}/${slotResult.slotInfo?.total} available)`);
     
-    // Cancel pending followups if configured (check both conditional config AND rulebook action rules)
-    let cancelledFollowups = [];
-    if (conditional.cancelPending && actionRules.cancelPendingFollowupsIfConfigured) {
-      cancelledFollowups = await this._cancelPendingFollowups(leadId, conditional.name);
+    // PAUSE lower-priority jobs (both followups AND manual mails) when conditional triggers
+    // This uses RulebookService to correctly handle priority-based pausing
+    const pauseResult = await RulebookService.pauseLowerPriorityJobs(leadId, `conditional:${conditional.name}`);
+    
+    if (pauseResult.pausedCount > 0) {
+      console.log(`[ConditionalEmail] Paused ${pauseResult.pausedCount} lower-priority jobs for lead ${leadId}`);
     }
     
     // Create the conditional email job record
     const job = await ConditionalEmailRepository.createJob({
       conditionalEmailId: conditional.id,
       leadId: leadId,
-      status: 'pending',
+      status: "pending",
       scheduledFor: scheduledFor,
       triggeredByEvent: eventType,
       triggeredByJobId: sourceJobId,
-      cancelledFollowups: cancelledFollowups.length > 0 ? cancelledFollowups : null
+      pausedJobs: pauseResult.pausedCount > 0 ? pauseResult.pausedJobs : null, // Track paused jobs for potential resume
     });
     
     // Create an actual EmailJob for sending (now with validated scheduledFor)

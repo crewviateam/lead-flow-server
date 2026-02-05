@@ -325,7 +325,24 @@ class EmailSchedulerService {
         console.log(`[Scheduler] No timezone for ${lead.email}, defaulting to UTC`);
       }
 
-      // Safety guard for terminal states
+      // ==========================================
+      // CRITICAL SAFETY CHECK: Terminal State Guard (PRIMARY)
+      // This is the FIRST and MOST IMPORTANT check
+      // No scheduling should EVER proceed if lead is in terminal state
+      // ==========================================
+      if (lead.terminalState) {
+        console.log(`Scheduler: ⛔ Lead ${lead.email} is in terminal state (${lead.terminalState}). BLOCKING.`);
+        return null;
+      }
+      
+      // Block if lead is in failure state (requires manual intervention)
+      if (lead.isInFailure) {
+        console.log(`Scheduler: ⛔ Lead ${lead.email} is in failure state. Manual retry required. BLOCKING.`);
+        return null;
+      }
+      // ==========================================
+
+      // Safety guard for terminal statuses (SECONDARY - backup check via status string)
       const terminalStates = [
         "failed",
         "hard_bounce",
@@ -1169,7 +1186,16 @@ class EmailSchedulerService {
       schedulerSettings,
       customStatus,
       nextRetryCount,
+      emailJob.templateId,  // Preserve template
+      null,                 // No condition
+      { skipDuplicateCheck: true }  // CRITICAL: Skip duplicate check for reschedule operations
     );
+    
+    // Handle case where scheduleEmailJob returns null (shouldn't happen with skipDuplicateCheck)
+    if (!newJob) {
+      console.error(`[Scheduler] rescheduleEmailJob failed to create new job for ${emailJob.type}`);
+      throw new Error("Failed to create rescheduled job - scheduleEmailJob returned null");
+    }
 
     await prisma.emailJob.update({
       where: { id: newJob.id },
@@ -1490,6 +1516,22 @@ class EmailSchedulerService {
     const lead = await LeadRepository.findById(leadId);
     if (!lead) throw new Error("Lead not found");
 
+    // ==========================================
+    // CRITICAL SAFETY CHECK: Terminal State Guard
+    // Cannot schedule ANY mail on leads in terminal state
+    // ==========================================
+    if (lead.terminalState) {
+      console.log(`[ManualSlot] ⛔ Lead ${lead.email} is in terminal state (${lead.terminalState}), BLOCKING schedule`);
+      throw new Error(`Cannot schedule mail: lead is in terminal state (${lead.terminalState}). Resurrect lead first.`);
+    }
+    
+    // Block if lead is in failure state (requires clearing failure first)
+    if (lead.isInFailure) {
+      console.log(`[ManualSlot] ⛔ Lead ${lead.email} is in failure state, BLOCKING schedule - clear failure first`);
+      throw new Error(`Cannot schedule mail: lead has unresolved failure. Clear failure state first.`);
+    }
+    // ==========================================
+
     // Resolve template ID (might be name from frontend)
     const resolvedTemplateId = await this.resolveTemplateId(templateId);
     console.log(
@@ -1563,45 +1605,20 @@ class EmailSchedulerService {
       return existingJob;
     }
 
-    // Cancel pending jobs
-    const pendingJobs = await prisma.emailJob.findMany({
-      where: {
-        leadId: parseInt(leadId),
-        status: { in: ["pending", "queued", "rescheduled", "deferred"] },
-      },
-    });
-
-    const { emailSendQueue } = require("../queues/emailQueues");
-    const isTrueManualMail = !!title;
-
-    for (const pJob of pendingJobs) {
-      if (pJob.metadata?.queueJobId) {
-        try {
-          const bullJob = await emailSendQueue.getJob(pJob.metadata.queueJobId);
-          if (bullJob) await bullJob.remove();
-        } catch (err) {
-          /* ignore */
-        }
-      }
+    // PAUSE lower-priority pending jobs (followups) - NOT cancel!
+    // This uses RulebookService to correctly handle priority-based pausing
+    const RulebookService = require('./RulebookService');
+    const pauseResult = await RulebookService.pauseLowerPriorityJobs(leadId, 'manual');
+    
+    if (pauseResult.pausedCount > 0) {
+      console.log(
+        `[Manual] Paused ${pauseResult.pausedCount} lower-priority jobs for lead ${leadId}`,
+      );
     }
 
-    // Get retry count from active job
-    const activeJob = pendingJobs[0];
-    const preservedRetryCount = activeJob?.retryCount || 0;
+    // Get retry count from paused job if any
+    const preservedRetryCount = pauseResult.pausedJobs?.[0]?.retryCount || 0;
 
-    // Cancel pending jobs in DB
-    await prisma.emailJob.updateMany({
-      where: {
-        leadId: parseInt(leadId),
-        status: { in: ["pending", "queued", "rescheduled", "deferred"] },
-      },
-      data: {
-        status: "cancelled",
-        lastError: isTrueManualMail
-          ? "Auto-paused for manual mail priority"
-          : "Cancelled by Manual Priority Override",
-      },
-    });
 
     // VALIDATE AND RESERVE SLOT
     // Manual scheduling must also respect business hours, working days, and rate limits

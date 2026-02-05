@@ -1,15 +1,58 @@
 // app.js
 // Express server with PostgreSQL (Prisma)
+// Production-ready with security headers and CORS
 
 const express = require('express');
 const compression = require('compression');
+const helmet = require('helmet');
+const { loggers } = require('./lib/logger');
+const log = loggers.default;
 require('dotenv').config();
+
+// ============================================
+// ENVIRONMENT VALIDATION
+// ============================================
+const requiredEnvVars = ['DATABASE_URL'];
+const optionalButWarnEnvVars = ['BREVO_API_KEY', 'REDIS_URL'];
+
+requiredEnvVars.forEach(key => {
+  if (!process.env[key]) {
+    console.error(`❌ FATAL: Missing required environment variable: ${key}`);
+    process.exit(1);
+  }
+});
+
+optionalButWarnEnvVars.forEach(key => {
+  if (!process.env[key]) {
+    console.warn(`⚠️ WARNING: Missing optional environment variable: ${key}`);
+  }
+});
 
 // Initialize Express app
 const app = express();
 
 // Initialize Prisma client
 const { prisma, disconnectPrisma } = require('./lib/prisma');
+
+// ============================================
+// SECURITY MIDDLEWARE
+// ============================================
+
+// Helmet.js - Sets various HTTP headers for security
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+      fontSrc: ["'self'", "https://fonts.gstatic.com"],
+      imgSrc: ["'self'", "data:", "https:"],
+      scriptSrc: ["'self'"],
+      connectSrc: ["'self'", "wss:", "ws:"]
+    }
+  },
+  crossOriginEmbedderPolicy: false, // Required for some external resources
+  crossOriginResourcePolicy: { policy: "cross-origin" }
+}));
 
 // Compression middleware (reduces payload sizes by 60-80%)
 app.use(compression({
@@ -25,11 +68,26 @@ app.use(compression({
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// CORS (for development)
+// ============================================
+// CORS CONFIGURATION
+// ============================================
+const allowedOrigins = process.env.ALLOWED_ORIGINS 
+  ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim())
+  : ['http://localhost:5173', 'http://localhost:3000', 'https://lead-flow-client.vercel.app']; // Dev defaults
+
 app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  const origin = req.headers.origin;
+  
+  // Allow if origin is in allowed list or if no origin (same-origin requests)
+  if (!origin || allowedOrigins.includes(origin) || allowedOrigins.includes('*')) {
+    res.header('Access-Control-Allow-Origin', origin || '*');
+  }
+  
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  res.header('Access-Control-Max-Age', '86400'); // Cache preflight for 24 hours
+  
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
   }
@@ -39,13 +97,13 @@ app.use((req, res, next) => {
 // Test PostgreSQL connection on startup and clear settings cache
 prisma.$connect()
   .then(async () => {
-    console.log('✅ PostgreSQL (Prisma) connected');
+    log.info('PostgreSQL (Prisma) connected');
     // Clear settings cache on startup to ensure fresh data
     const { cache } = require('./lib/cache');
     await cache.invalidateSettings();
-    console.log('✅ Settings cache cleared');
+    log.info('Settings cache cleared');
   })
-  .catch(err => console.error('❌ PostgreSQL connection error:', err));
+  .catch(err => log.error({ error: err.message }, 'PostgreSQL connection error'));
 
 // Initialize event handlers
 require('./events/handlers');
@@ -56,7 +114,7 @@ const followupWorker = require('./workers/followupWorker');
 const analyticsWorker = require('./workers/analyticsWorker');
 const CronService = require('./services/CronService');
 
-console.log('✅ Workers initialized');
+log.info('Workers initialized');
 
 // Initialize Cron Service
 CronService.init();

@@ -1,26 +1,28 @@
 // events/handlers/EmailDeferredHandler.js
-// Event handler using Prisma
+// Event handler using Prisma with structured logging
 
 const EventBus = require('../EventBus');
 const { prisma } = require('../../lib/prisma');
 const { SettingsRepository, EmailJobRepository } = require('../../repositories');
+const { loggers } = require('../../lib/logger');
+const log = loggers.events;
 
 EventBus.on('EmailDeferred', async (payload) => {
   try {
-    console.log('EmailDeferred event received:', payload);
+    log.info({ payload }, 'EmailDeferred event received');
 
     const { emailJobId, leadId, email, eventData } = payload;
     
     const emailJob = await EmailJobRepository.findById(emailJobId);
     if (!emailJob) {
-      console.warn(`[DeferredHandler] Job ${emailJobId} not found.`);
+      log.warn({ emailJobId }, 'Job not found');
       return;
     }
 
     const settings = await SettingsRepository.getSettings();
     const softBounceDelay = settings.retry?.softBounceDelayHours || 24;
 
-    console.log(`Email deferred for job ${emailJobId}. Automatically rescheduling in ${softBounceDelay} hours...`);
+    log.info({ emailJobId, softBounceDelay }, 'Email deferred, automatically rescheduling');
     
     const EmailSchedulerService = require('../../services/EmailSchedulerService');
     const newJob = await EmailSchedulerService.rescheduleEmailJob(emailJobId, softBounceDelay, 'rescheduled');
@@ -45,6 +47,6 @@ EventBus.on('EmailDeferred', async (payload) => {
     });
 
   } catch (error) {
-    console.error('Error handling EmailDeferred event:', error);
+    log.error({ error: error.message, stack: error.stack }, 'Error handling EmailDeferred event');
   }
 });

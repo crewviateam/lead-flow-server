@@ -64,7 +64,7 @@ class SettingsRepository {
    */
   async updateSettings(updates) {
     const data = {};
-    
+
     if (updates.rateLimit) {
       if (updates.rateLimit.emailsPerWindow !== undefined) {
         data.rateLimitEmailsPerWindow = updates.rateLimit.emailsPerWindow;
@@ -96,9 +96,20 @@ class SettingsRepository {
     }
 
     if (updates.brevo) {
-      if (updates.brevo.apiKey !== undefined) data.brevoApiKey = updates.brevo.apiKey;
-      if (updates.brevo.fromEmail !== undefined) data.brevoFromEmail = updates.brevo.fromEmail;
-      if (updates.brevo.fromName !== undefined) data.brevoFromName = updates.brevo.fromName;
+      if (updates.brevo.apiKey !== undefined)
+        data.brevoApiKey = updates.brevo.apiKey;
+      if (updates.brevo.fromEmail !== undefined)
+        data.brevoFromEmail = updates.brevo.fromEmail;
+      if (updates.brevo.fromName !== undefined)
+        data.brevoFromName = updates.brevo.fromName;
+
+      // Invalidate Brevo credentials cache so changes take effect immediately
+      try {
+        const BrevoEmailService = require("../services/BrevoEmailService");
+        BrevoEmailService.invalidateCredentialsCache();
+      } catch (e) {
+        // Ignore if service not loaded yet
+      }
     }
 
     if (updates.smartSendTime) {
@@ -106,10 +117,14 @@ class SettingsRepository {
     }
 
     if (updates.reporting) {
-      if (updates.reporting.enabled !== undefined) data.reportingEnabled = updates.reporting.enabled;
-      if (updates.reporting.recipients !== undefined) data.reportingRecipients = updates.reporting.recipients;
-      if (updates.reporting.dayOfWeek !== undefined) data.reportingDayOfWeek = updates.reporting.dayOfWeek;
-      if (updates.reporting.time !== undefined) data.reportingTime = updates.reporting.time;
+      if (updates.reporting.enabled !== undefined)
+        data.reportingEnabled = updates.reporting.enabled;
+      if (updates.reporting.recipients !== undefined)
+        data.reportingRecipients = updates.reporting.recipients;
+      if (updates.reporting.dayOfWeek !== undefined)
+        data.reportingDayOfWeek = updates.reporting.dayOfWeek;
+      if (updates.reporting.time !== undefined)
+        data.reportingTime = updates.reporting.time;
     }
 
     // Handle followups updates (this was missing!)
@@ -123,12 +138,57 @@ class SettingsRepository {
     }
 
     const settings = await prisma.settings.update({
-      where: { id: 'global' },
-      data
+      where: { id: "global" },
+      data,
     });
 
     // Invalidate cache
     await cache.invalidateSettings();
+
+    // CRITICAL: Sync pending email jobs with updated template IDs
+    // This ensures template changes take effect for already-scheduled emails
+    if (updates.followups && Array.isArray(updates.followups)) {
+      try {
+        console.log(
+          "[Settings] Syncing pending email jobs with updated templates...",
+        );
+
+        for (const followup of updates.followups) {
+          if (!followup.name) continue;
+
+          // Update all pending jobs of this type with the new templateId
+          const updateResult = await prisma.emailJob.updateMany({
+            where: {
+              type: followup.name,
+              status: {
+                in: [
+                  "pending",
+                  "queued",
+                  "scheduled",
+                  "rescheduled",
+                  "deferred",
+                ],
+              },
+            },
+            data: {
+              templateId: followup.templateId || null,
+            },
+          });
+
+          if (updateResult.count > 0) {
+            console.log(
+              `[Settings] Updated ${updateResult.count} pending "${followup.name}" jobs with templateId: ${followup.templateId || "null"}`,
+            );
+          }
+        }
+      } catch (syncError) {
+        console.error(
+          "[Settings] Error syncing pending jobs with new templates:",
+          syncError.message,
+        );
+        // Don't throw - settings were saved successfully, this is a best-effort sync
+      }
+    }
 
     return this._transformToLegacy(settings);
   }

@@ -251,19 +251,20 @@ class UniqueJourneyService {
     
     // Group by type, keeping the most relevant job for each type
     const journeyMap = new Map();
-    const priorityStatuses = ['clicked', 'opened', 'delivered', 'sent', 'pending', 'queued', 'scheduled', 'failed'];
-    
+
     for (const job of jobs) {
       const existing = journeyMap.get(job.type);
-      
+
       if (!existing) {
         journeyMap.set(job.type, job);
       } else {
-        // Keep the one with higher priority status
-        const existingPriority = priorityStatuses.indexOf(existing.status);
-        const newPriority = priorityStatuses.indexOf(job.status);
-        
-        if (newPriority >= 0 && (existingPriority < 0 || newPriority < existingPriority)) {
+        // Keep the one with higher priority status (use RulebookService for status priority)
+        const existingPriority = RulebookService.getStatusPriority(
+          existing.status,
+        );
+        const newPriority = RulebookService.getStatusPriority(job.status);
+
+        if (newPriority > existingPriority) {
           journeyMap.set(job.type, job);
         }
       }

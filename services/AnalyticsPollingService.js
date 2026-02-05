@@ -1,5 +1,6 @@
 // services/AnalyticsPollingService.js
 // Analytics polling service using Prisma
+// Supports MOCK_BREVO_URL env var for testing with mock server
 
 const axios = require('axios');
 const moment = require('moment-timezone');
@@ -9,11 +10,19 @@ require('dotenv').config();
 
 class AnalyticsPollingService {
   constructor() {
-    this.baseUrl = 'https://api.brevo.com/v3';
+    // Use MOCK_BREVO_URL if set, otherwise use real Brevo API
+    // Mock URL needs /v3 appended since mock server routes are at /v3/*
+    this.baseUrl = process.env.MOCK_BREVO_URL 
+      ? `${process.env.MOCK_BREVO_URL}/v3`
+      : 'https://api.brevo.com/v3';
     this.processedEvents = new Set();
     this._cachedApiKey = null;
     this._cacheTime = null;
     this._cacheDurationMs = 60000; // 1 minute
+    
+    if (process.env.MOCK_BREVO_URL) {
+      console.log(`🧪 [AnalyticsPollingService] MOCK MODE: Using ${process.env.MOCK_BREVO_URL}`);
+    }
   }
   
   /**
@@ -77,7 +86,7 @@ class AnalyticsPollingService {
     const endDate = new Date();
     const startDate = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
-    const eventTypes = ['delivered', 'opened', 'uniqueOpened', 'clicks', 'hardBounces', 'softBounces', 'deferred', 'blocked', 'spam', 'requests'];
+    const eventTypes = ['delivered', 'opened', 'uniqueOpened', 'clicks', 'hardBounces', 'softBounces', 'deferred', 'blocked', 'spam', 'requests', 'unsubscribed', 'error', 'invalid'];
     
     for (const eventType of eventTypes) {
       try {

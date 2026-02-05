@@ -5,6 +5,8 @@
 const { Worker } = require('bullmq');
 const redisConnection = require('../config/redis');
 const EmailSchedulerService = require('../services/EmailSchedulerService');
+const { loggers } = require("../lib/logger");
+const log = loggers.worker;
 
 let worker = null;
 
@@ -12,18 +14,18 @@ const startFollowupWorker = () => {
   if (worker) return worker;
 
   worker = new Worker(
-    'followup-queue',
+    "followup-queue",
     async (job) => {
       const { leadId, originalEmailJobId } = job.data;
 
-      console.log(`[FollowupWorker] Processing followup for lead ${leadId}`);
+      log.info({ leadId }, "Processing followup for lead");
 
       // Schedule follow-up email using the same scheduler logic
-      // 'originalEmailJobId' is not strictly needed for scheduleNextEmail as it inspects the DB, 
+      // 'originalEmailJobId' is not strictly needed for scheduleNextEmail as it inspects the DB,
       // but we log it for context if needed.
       await EmailSchedulerService.scheduleNextEmail(leadId);
 
-      return { status: 'followup_scheduled', leadId };
+      return { status: "followup_scheduled", leadId };
     },
     {
       connection: redisConnection,
@@ -31,22 +33,25 @@ const startFollowupWorker = () => {
       // Rate limiter: Max 5 jobs per second to prevent overload
       limiter: {
         max: 5,
-        duration: 1000
+        duration: 1000,
       },
       removeOnComplete: { count: 1000 },
-      removeOnFail: { count: 5000 }
-    }
+      removeOnFail: { count: 5000 },
+    },
   );
 
-  worker.on('completed', (job, result) => {
-    console.log(`[FollowupWorker] Job ${job.id} completed:`, result);
+  worker.on("completed", (job, result) => {
+    log.debug({ bullJobId: job.id, result }, "Followup job completed");
   });
 
-  worker.on('failed', (job, error) => {
-    console.error(`[FollowupWorker] Job ${job?.id} failed:`, error.message);
+  worker.on("failed", (job, error) => {
+    log.error(
+      { bullJobId: job?.id, error: error.message },
+      "Followup job failed",
+    );
   });
 
-  console.log('✅ Followup worker started with rate limiting');
+  log.info("Followup worker started with rate limiting");
   return worker;
 };
 

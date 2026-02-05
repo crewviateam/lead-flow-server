@@ -9,6 +9,7 @@ const { prisma } = require('../lib/prisma');
 const UniqueJourneyService = require('../services/UniqueJourneyService');
 const RulebookService = require('../services/RulebookService');
 const { loggers } = require('../lib/logger');
+const log = loggers.worker;
 
 let worker = null;
 
@@ -16,7 +17,7 @@ const startWorker = () => {
   if (worker) return worker;
 
   worker = new Worker(
-    'email-send-queue',
+    "email-send-queue",
     async (job) => {
       const { emailJobId, leadId, leadEmail, emailType } = job.data;
       const parsedJobId = parseInt(emailJobId);
@@ -27,8 +28,9 @@ const startWorker = () => {
         const emailJob = await EmailJobRepository.findById(parsedJobId);
         if (!emailJob) {
           // Return early instead of throwing - no point retrying if job was deleted
-          console.log(
-            `[EmailWorker] Job ${parsedJobId} not found in database, skipping (may have been deleted)`,
+          log.warn(
+            { jobId: parsedJobId },
+            "Job not found in database, skipping (may have been deleted)",
           );
           return { status: "skipped", reason: "Job not found in database" };
         }
@@ -36,8 +38,9 @@ const startWorker = () => {
         // Skip if already processed (including opened/clicked which are terminal)
         const processedStatuses = RulebookService.getProcessedStatuses();
         if (processedStatuses.includes(emailJob.status)) {
-          console.log(
-            `[EmailWorker] DUPLICATE PREVENTED: Job ${parsedJobId} already has status ${emailJob.status}`,
+          log.info(
+            { jobId: parsedJobId, status: emailJob.status },
+            "DUPLICATE PREVENTED: Job already processed",
           );
           return { status: "skipped", reason: `Already ${emailJob.status}` };
         }
@@ -48,8 +51,9 @@ const startWorker = () => {
           where: { id: parsedJobId },
         });
         if (freshJob && processedStatuses.includes(freshJob.status)) {
-          console.log(
-            `[EmailWorker] DUPLICATE PREVENTED (race): Job ${parsedJobId} status changed to ${freshJob.status}`,
+          log.info(
+            { jobId: parsedJobId, status: freshJob.status },
+            "DUPLICATE PREVENTED (race): Status changed",
           );
           return {
             status: "skipped",
@@ -73,8 +77,9 @@ const startWorker = () => {
           emailJob.type,
         );
         if (alreadySent) {
-          console.log(
-            `[EmailWorker] DUPLICATE BLOCKED: ${emailJob.type} already sent to lead ${parsedLeadId}`,
+          log.warn(
+            { leadId: parsedLeadId, emailType: emailJob.type },
+            "DUPLICATE BLOCKED: Email type already sent to lead",
           );
           await prisma.emailJob.update({
             where: { id: parsedJobId },
@@ -88,11 +93,59 @@ const startWorker = () => {
         }
 
         // ============================================
-        // TEMPLATE SELECTION (Simplified)
-        // Conditions are now handled by ConditionalEmailService
-        // Followups use their assigned templateId directly
+        // LATE-BINDING TEMPLATE RESOLUTION
+        // Fetch the CURRENT template from settings at send time
+        // This ensures user's latest template changes take effect
+        // even for already-scheduled emails
+        //
+        // SKIP for manual emails - they use their stored templateId
+        // because they are fully user-managed
         // ============================================
-        const effectiveTemplateId = emailJob.templateId;
+        const { SettingsRepository } = require("../repositories");
+        let effectiveTemplateId = emailJob.templateId; // Default to stored value
+
+        // Check if this is a manual email (skip late-binding for manual)
+        const isManualEmail =
+          emailJob.type === "manual" ||
+          emailJob.type?.startsWith("manual:") ||
+          emailJob.metadata?.manual === true ||
+          emailJob.metadata?.manualHtmlContent;
+
+        // For followups/initial ONLY (not manual), get the latest templateId from current settings
+        if (!isManualEmail) {
+          try {
+            const settings = await SettingsRepository.getSettings();
+            const followups = settings.followups || [];
+            const matchingFollowup = followups.find(
+              (f) => f.name === emailJob.type,
+            );
+
+            if (matchingFollowup && matchingFollowup.templateId) {
+              if (matchingFollowup.templateId !== emailJob.templateId) {
+                log.info(
+                  {
+                    emailType: emailJob.type,
+                    oldTemplateId: emailJob.templateId,
+                    newTemplateId: matchingFollowup.templateId,
+                  },
+                  "LATE-BINDING: Template changed",
+                );
+              }
+              effectiveTemplateId = matchingFollowup.templateId;
+            }
+          } catch (err) {
+            log.warn(
+              { error: err.message },
+              "Could not fetch settings for late-binding",
+            );
+            // Continue with stored templateId
+          }
+        } else {
+          log.debug(
+            { templateId: emailJob.templateId },
+            "MANUAL EMAIL: Using stored templateId (no late-binding)",
+          );
+        }
 
         // ============================================
         // CRITICAL: ATOMIC SEND ATTEMPT MARKING
@@ -103,8 +156,9 @@ const startWorker = () => {
         const sendAttemptMarked =
           await UniqueJourneyService.markSendAttempt(parsedJobId);
         if (!sendAttemptMarked) {
-          console.log(
-            `[EmailWorker] Job ${parsedJobId} already being processed by another worker, skipping`,
+          log.info(
+            { jobId: parsedJobId },
+            "Job already being processed by another worker, skipping",
           );
           return {
             status: "skipped",
@@ -113,10 +167,25 @@ const startWorker = () => {
         }
 
         // Send the email via Brevo
-        console.log(
-          `[EmailWorker] Sending email job ${parsedJobId}, type: ${emailJob.type}, templateId: ${emailJob.templateId || "none"}`,
+        // Use effectiveTemplateId (late-bound) instead of stored templateId
+        log.info(
+          {
+            jobId: parsedJobId,
+            emailType: emailJob.type,
+            templateId: effectiveTemplateId || "none",
+          },
+          "Sending email",
         );
-        const result = await BrevoEmailService.sendEmail(emailJob, lead);
+
+        // Override templateId with late-bound value
+        const jobWithLatestTemplate = {
+          ...emailJob,
+          templateId: effectiveTemplateId,
+        };
+        const result = await BrevoEmailService.sendEmail(
+          jobWithLatestTemplate,
+          lead,
+        );
 
         // Update job status to sent
         await prisma.emailJob.update({
@@ -135,8 +204,9 @@ const startWorker = () => {
             where: { emailJobId: parsedJobId },
             data: { status: "sent" },
           });
-          console.log(
-            `[EmailWorker] Updated ManualMail status to 'sent' for jobId ${parsedJobId}`,
+          log.debug(
+            { jobId: parsedJobId },
+            "Updated ManualMail status to sent",
           );
         }
 
@@ -171,9 +241,9 @@ const startWorker = () => {
 
         return { status: "sent", messageId: result.messageId };
       } catch (error) {
-        console.error(
-          `[EmailWorker] Error processing job ${parsedJobId}:`,
-          error,
+        log.error(
+          { jobId: parsedJobId, error: error.message, stack: error.stack },
+          "Error processing email job",
         );
 
         // Update job with error - wrap in try-catch to handle non-existent records
@@ -188,9 +258,9 @@ const startWorker = () => {
           });
         } catch (updateError) {
           // Job record doesn't exist - this can happen if job was deleted or ID is invalid
-          console.error(
-            `[EmailWorker] Could not update job ${parsedJobId} status:`,
-            updateError.message,
+          log.error(
+            { jobId: parsedJobId, error: updateError.message },
+            "Could not update job status",
           );
         }
 
@@ -203,22 +273,22 @@ const startWorker = () => {
       // Rate limiter: Max 10 jobs per second to prevent email service overload
       limiter: {
         max: 10,
-        duration: 1000
+        duration: 1000,
       },
       removeOnComplete: { count: 1000 },
-      removeOnFail: { count: 5000 }
-    }
+      removeOnFail: { count: 5000 },
+    },
   );
 
-  worker.on('completed', (job, result) => {
-    console.log(`[EmailWorker] Job ${job.id} completed:`, result);
+  worker.on("completed", (job, result) => {
+    log.debug({ bullJobId: job.id, result }, "Job completed");
   });
 
-  worker.on('failed', (job, error) => {
-    console.error(`[EmailWorker] Job ${job?.id} failed:`, error.message);
+  worker.on("failed", (job, error) => {
+    log.error({ bullJobId: job?.id, error: error.message }, "Job failed");
   });
 
-  console.log('✅ Email worker started');
+  log.info("Email worker started");
   return worker;
 };
 

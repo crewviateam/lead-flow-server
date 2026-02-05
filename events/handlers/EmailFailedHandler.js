@@ -141,6 +141,16 @@ EventBus.on('EmailFailed', async (payload) => {
       });
     } else {
       // Just update lead status - manual retry required
+      // CRITICAL: Mark lead as isInFailure to block auto-resume until manually resolved
+      await prisma.lead.update({
+        where: { id: job.leadId },
+        data: {
+          isInFailure: true,
+          lastFailureAt: new Date(),
+          lastFailureType: eventType,
+        },
+      });
+
       const StatusUpdateService = require("../../services/StatusUpdateService");
       await StatusUpdateService._recalculateStatus(
         job.leadId,

@@ -1,16 +1,36 @@
 // services/BrevoEmailService.js
 // Brevo email service using Prisma
+// Supports MOCK_BREVO_URL env var for testing with mock server
 
 const axios = require('axios');
 const { SettingsRepository } = require('../repositories');
+const { loggers } = require('../lib/logger');
+const log = loggers.email;
 require('dotenv').config();
 
 class BrevoEmailService {
   constructor() {
-    this.apiUrl = 'https://api.brevo.com/v3/smtp/email';
+    // Use MOCK_BREVO_URL if set, otherwise use real Brevo API
+    // To use mock: set MOCK_BREVO_URL=http://localhost:3001
+    this.apiUrl = process.env.MOCK_BREVO_URL 
+      ? `${process.env.MOCK_BREVO_URL}/v3/smtp/email`
+      : "https://api.brevo.com/v3/smtp/email";
     this._cachedCredentials = null;
     this._credentialsCacheTime = null;
     this._cacheDurationMs = 60000; // Cache for 1 minute
+    
+    if (process.env.MOCK_BREVO_URL) {
+      log.warn({ mockUrl: process.env.MOCK_BREVO_URL }, 'MOCK MODE enabled');
+    }
+  }
+
+  /**
+   * Invalidate the credentials cache (call when Brevo settings are updated)
+   */
+  invalidateCredentialsCache() {
+    this._cachedCredentials = null;
+    this._credentialsCacheTime = null;
+    log.debug('Credentials cache invalidated');
   }
 
   /**
@@ -18,52 +38,67 @@ class BrevoEmailService {
    */
   async getCredentials() {
     const now = Date.now();
-    
-    if (this._cachedCredentials && this._credentialsCacheTime && (now - this._credentialsCacheTime) < this._cacheDurationMs) {
+
+    if (
+      this._cachedCredentials &&
+      this._credentialsCacheTime &&
+      now - this._credentialsCacheTime < this._cacheDurationMs
+    ) {
       return this._cachedCredentials;
     }
-    
+
     try {
       const settings = await SettingsRepository.getSettings();
       const brevoConfig = settings.brevo || {};
-      
+
       this._cachedCredentials = {
-        apiKey: brevoConfig.apiKey || process.env.BREVO_API_KEY || '',
-        fromEmail: brevoConfig.fromEmail || process.env.FROM_EMAIL || 'noreply@example.com',
-        fromName: brevoConfig.fromName || process.env.FROM_NAME || 'Your Company'
+        apiKey: brevoConfig.apiKey || process.env.BREVO_API_KEY || "",
+        fromEmail:
+          brevoConfig.fromEmail ||
+          process.env.FROM_EMAIL ||
+          "noreply@example.com",
+        fromName:
+          brevoConfig.fromName || process.env.FROM_NAME || "Your Company",
       };
       this._credentialsCacheTime = now;
-      
+
       if (!this._cachedCredentials.apiKey) {
-        console.error('❌ WARNING: No Brevo API key configured in DB or .env!');
+        log.error('No Brevo API key configured in DB or .env');
       }
-      
+
       return this._cachedCredentials;
     } catch (error) {
-      console.error('Error loading Brevo credentials from DB:', error.message);
+      log.error({ error: error.message }, 'Error loading Brevo credentials from DB');
       return {
-        apiKey: process.env.BREVO_API_KEY || '',
-        fromEmail: process.env.FROM_EMAIL || 'noreply@example.com',
-        fromName: process.env.FROM_NAME || 'Your Company'
+        apiKey: process.env.BREVO_API_KEY || "",
+        fromEmail: process.env.FROM_EMAIL || "noreply@example.com",
+        fromName: process.env.FROM_NAME || "Your Company",
       };
     }
   }
 
   async sendEmail(emailJobOrParams, leadOrNothing) {
     const credentials = await this.getCredentials();
-    const { prisma } = require('../lib/prisma');
-    
+    const { prisma } = require("../lib/prisma");
+
     // Handle both calling styles:
     // 1. sendEmail(emailJob, lead) - from emailWorker
     // 2. sendEmail({ to, name, type, ... }) - old style direct call
-    let to, name, type, idempotencyKey, customSubject, customHtml, templateId, lead;
-    
+    let to,
+      name,
+      type,
+      idempotencyKey,
+      customSubject,
+      customHtml,
+      templateId,
+      lead;
+
     if (leadOrNothing) {
       // Called as sendEmail(emailJob, lead)
       const emailJob = emailJobOrParams;
       lead = leadOrNothing;
       to = emailJob.email || lead.email;
-      name = lead.name || 'Valued Customer';
+      name = lead.name || "Valued Customer";
       type = emailJob.type;
       idempotencyKey = emailJob.idempotencyKey;
       templateId = emailJob.templateId;
@@ -80,31 +115,33 @@ class BrevoEmailService {
       customHtml = emailJobOrParams.htmlContent;
       lead = emailJobOrParams.lead || {}; // Optional lead object for variable replacement
     }
-    
+
     let subject = customSubject;
     let htmlContent = customHtml;
-    
+
     // If templateId is provided, fetch template from database
     if (templateId && !htmlContent) {
       try {
         console.log(`[BrevoEmailService] Fetching template ID: ${templateId}`);
         const template = await prisma.emailTemplate.findUnique({
-          where: { id: parseInt(templateId) }
+          where: { id: parseInt(templateId) },
         });
-        
+
         if (template) {
-          console.log(`[BrevoEmailService] Found template: "${template.name}" with subject: "${template.subject}"`);
+          console.log(
+            `[BrevoEmailService] Found template: "${template.name}" with subject: "${template.subject}"`,
+          );
           subject = template.subject || subject;
           htmlContent = template.body || template.content;
-          
+
           // Build variable replacements from lead data
-          const firstName = name.split(' ')[0] || '';
-          const lastName = name.split(' ').slice(1).join(' ') || '';
-          const company = name || name || '';
-          const position = lead?.position || lead?.title || '';
-          const phone = lead?.phone || '';
-          const source = lead?.source || '';
-          
+          const firstName = name.split(" ")[0] || "";
+          const lastName = name.split(" ").slice(1).join(" ") || "";
+          const company = name || name || "";
+          const position = lead?.position || lead?.title || "";
+          const phone = lead?.phone || "";
+          const source = lead?.source || "";
+
           // Apply ALL personalization variables to htmlContent
           if (htmlContent) {
             htmlContent = htmlContent
@@ -128,29 +165,38 @@ class BrevoEmailService {
               .replace(/\{\{company\}\}/gi, company);
           }
         } else {
-          console.warn(`[BrevoEmailService] Template ID ${templateId} not found in database`);
+          console.warn(
+            `[BrevoEmailService] Template ID ${templateId} not found in database`,
+          );
         }
       } catch (err) {
-        console.error(`[BrevoEmailService] Failed to fetch template ${templateId}:`, err.message);
+        console.error(
+          `[BrevoEmailService] Failed to fetch template ${templateId}:`,
+          err.message,
+        );
       }
     } else if (!templateId) {
-      console.log(`[BrevoEmailService] No templateId provided, using default template for type: ${type}`);
+      console.log(
+        `[BrevoEmailService] No templateId provided, using default template for type: ${type}`,
+      );
     }
-    
+
     // Fallback to default templates
     if (!subject) {
-      subject = type?.toLowerCase().includes('initial') 
-        ? 'Welcome! Let\'s get started' 
-        : 'Following up on our previous message';
+      subject = type?.toLowerCase().includes("initial")
+        ? "Welcome! Let's get started"
+        : "Following up on our previous message";
     }
-    
+
     if (!htmlContent) {
-      htmlContent = type?.toLowerCase().includes('initial')
+      htmlContent = type?.toLowerCase().includes("initial")
         ? this.getInitialEmailTemplate(name)
         : this.getFollowUpEmailTemplate(name);
     }
 
     try {
+      log.debug({ subject, to }, 'Sending email via Brevo');
+      
       const response = await axios.post(
         this.apiUrl,
         {
@@ -159,23 +205,25 @@ class BrevoEmailService {
           subject,
           htmlContent,
           headers: {
-            'X-Idempotency-Key': idempotencyKey
-          }
+            "X-Idempotency-Key": idempotencyKey,
+          },
         },
         {
           headers: {
-            'api-key': credentials.apiKey,
-            'Content-Type': 'application/json'
-          }
-        }
+            "api-key": credentials.apiKey,
+            "Content-Type": "application/json",
+          },
+        },
       );
 
       return {
         success: true,
-        messageId: response.data.messageId
+        messageId: response.data.messageId,
       };
     } catch (error) {
-      throw new Error(`Brevo API error: ${error.response?.data?.message || error.message}`);
+      throw new Error(
+        `Brevo API error: ${error.response?.data?.message || error.message}`,
+      );
     }
   }
 

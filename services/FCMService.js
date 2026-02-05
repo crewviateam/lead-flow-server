@@ -39,13 +39,17 @@ class FCMService {
       const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT;
 
       if (serviceAccountPath) {
-        // Initialize from file path
-        const serviceAccount = require(serviceAccountPath);
+        // Initialize from file path - resolve relative paths from project root
+        const path = require("path");
+        const resolvedPath = serviceAccountPath.startsWith(".")
+          ? path.resolve(__dirname, "..", serviceAccountPath)
+          : serviceAccountPath;
+        const serviceAccount = require(resolvedPath);
         admin.initializeApp({
-          credential: admin.credential.cert(serviceAccount)
+          credential: admin.credential.cert(serviceAccount),
         });
         this.initialized = true;
-        console.log('[FCM] ✓ Firebase initialized from service account file');
+        console.log("[FCM] ✓ Firebase initialized from service account file");
       } else if (serviceAccountJson) {
         // Initialize from JSON string
         const serviceAccount = JSON.parse(serviceAccountJson);

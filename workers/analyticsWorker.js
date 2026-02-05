@@ -5,6 +5,8 @@
 const { Worker } = require('bullmq');
 const redisConnection = require('../config/redis');
 const AnalyticsService = require('../services/AnalyticsService');
+const { loggers } = require("../lib/logger");
+const log = loggers.analytics;
 
 let worker = null;
 
@@ -12,15 +14,15 @@ const startAnalyticsWorker = () => {
   if (worker) return worker;
 
   worker = new Worker(
-    'analytics-queue',
+    "analytics-queue",
     async (job) => {
       const { eventType, eventData } = job.data;
 
-      console.log(`[AnalyticsWorker] Processing event: ${eventType}`);
+      log.info({ eventType }, "Processing webhook event");
 
       await AnalyticsService.processWebhookEvent(eventType, eventData);
 
-      return { status: 'processed', eventType };
+      return { status: "processed", eventType };
     },
     {
       connection: redisConnection,
@@ -28,22 +30,25 @@ const startAnalyticsWorker = () => {
       // Rate limiter: Max 10 jobs per second
       limiter: {
         max: 10,
-        duration: 1000
+        duration: 1000,
       },
       removeOnComplete: { count: 500 },
-      removeOnFail: { count: 2000 }
-    }
+      removeOnFail: { count: 2000 },
+    },
   );
 
-  worker.on('completed', (job, result) => {
-    console.log(`[AnalyticsWorker] Job ${job.id} completed:`, result);
+  worker.on("completed", (job, result) => {
+    log.debug({ bullJobId: job.id, result }, "Analytics job completed");
   });
 
-  worker.on('failed', (job, error) => {
-    console.error(`[AnalyticsWorker] Job ${job?.id} failed:`, error.message);
+  worker.on("failed", (job, error) => {
+    log.error(
+      { bullJobId: job?.id, error: error.message },
+      "Analytics job failed",
+    );
   });
 
-  console.log('✅ Analytics worker started with rate limiting');
+  log.info("Analytics worker started with rate limiting");
   return worker;
 };
 

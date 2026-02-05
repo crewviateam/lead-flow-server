@@ -50,6 +50,11 @@ model Lead {
   terminalReason    String?   @map("terminal_reason")     // Reason for terminal state
   totalRetries      Int       @default(0) @map("total_retries")  // Total retry attempts across all mails
   
+  // Failure State Tracking (for blocking resume after failure)
+  isInFailure       Boolean   @default(false) @map("is_in_failure")    // True when lead has failure requiring manual intervention
+  lastFailureAt     DateTime? @map("last_failure_at")                  // When last failure occurred
+  lastFailureType   String?   @map("last_failure_type")                // Type of last failure (blocked, hard_bounce, etc.)
+  
   // Timestamps
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")

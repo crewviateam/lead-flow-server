@@ -198,34 +198,51 @@ class AnalyticsController {
       // Use unified analytics for consistent counting across all pages
       const unified = await AnalyticsService.getUnifiedAnalytics(start, end);
       const t = unified.totals;
+      const byType = unified.byType;
+      console.log(t);
+      
       
       res.status(200).json({
         date: start,
+        // MAIN COUNTS (mutually exclusive: delivered + failed + rescheduled + terminal = sent)
         breakdown: {
           sent: t.sent,
           delivered: t.delivered,
           opened: t.opened,
           clicked: t.clicked,
-          softBounced: t.softBounce,
-          hardBounced: t.hardBounce,
-          deferred: t.deferred,
+          pending: t.pending,
+        },
+        // FAILED: Delivery failures
+        failedData: {
+          total: t.failed,
+          hardBounce: t.hardBounce,
           blocked: t.blocked,
           spam: t.spam,
-          failed: t.hardBounce + t.blocked + t.spam,  // DON'T add t.failed - it overlaps with blocked/hardBounce/spam (jobs with failed_at also have these statuses)
-          totalBounced: t.softBounce + t.hardBounce,
-          pending: t.pending
+          error: t.error,
+          invalid: t.invalid,
         },
-        failedData: {
-          total: t.hardBounce + t.blocked + t.spam,  // DON'T add t.failed - it overlaps with these statuses
-          blocked: t.blocked,
-          hardBounce: t.hardBounce
-        },
+        // RESCHEDULED: Pending retry
         rescheduledData: {
           total: t.rescheduled,
           softBounce: t.softBounce,
-          deferred: t.deferred
+          deferred: t.deferred,
         },
-        rates: unified.rates
+        // TERMINAL: Lead marked as terminal
+        terminalData: {
+          total: t.terminal,
+          unsubscribed: t.unsubscribed,
+          complaint: t.complaint,
+          dead: t.dead,
+        },
+        // PENDING: Not yet sent (by category)
+        pendingData: {
+          total: t.pending,
+          initial: byType.Initial?.pending || 0,
+          followup: byType.Followup?.pending || 0,
+          manual: byType.Manual?.pending || 0,
+          conditional: byType.Conditional?.pending || 0,
+        },
+        rates: unified.rates,
       });
     } catch (error) {
       console.error('Get detailed breakdown error:', error);
@@ -260,74 +277,192 @@ class AnalyticsController {
         totalSent: {
           count: t.sent,
           children: {
-            initial: { count: byType.Initial.sent, percent: calcPercent(byType.Initial.sent, t.sent), label: 'Initial Emails' },
-            followup: { count: byType.Followup.sent, percent: calcPercent(byType.Followup.sent, t.sent), label: 'Follow-up Emails' },
-            manual: { count: byType.Manual.sent, percent: calcPercent(byType.Manual.sent, t.sent), label: 'Manual Emails' },
-            conditional: { count: byType.Conditional?.sent || 0, percent: calcPercent(byType.Conditional?.sent || 0, t.sent), label: 'Conditional Emails' }
-          }
+            initial: {
+              count: byType.Initial.sent,
+              percent: calcPercent(byType.Initial.sent, t.sent),
+              label: "Initial Emails",
+            },
+            followup: {
+              count: byType.Followup.sent,
+              percent: calcPercent(byType.Followup.sent, t.sent),
+              label: "Follow-up Emails",
+            },
+            manual: {
+              count: byType.Manual.sent,
+              percent: calcPercent(byType.Manual.sent, t.sent),
+              label: "Manual Emails",
+            },
+            conditional: {
+              count: byType.Conditional?.sent || 0,
+              percent: calcPercent(byType.Conditional?.sent || 0, t.sent),
+              label: "Conditional Emails",
+            },
+          },
         },
         delivered: {
           count: t.delivered,
           percent: calcPercent(t.delivered, t.sent),
           children: {
-            opened: { count: t.opened, percent: calcPercent(t.opened, t.delivered), label: 'Opened' },
-            clicked: { count: t.clicked, percent: calcPercent(t.clicked, t.delivered), label: 'Clicked' }
-          }
+            opened: {
+              count: t.opened,
+              percent: calcPercent(t.opened, t.delivered),
+              label: "Opened",
+            },
+            clicked: {
+              count: t.clicked,
+              percent: calcPercent(t.clicked, t.delivered),
+              label: "Clicked",
+            },
+          },
         },
-        pending: {
-          count: t.pending,
-          percent: calcPercent(t.pending, t.sent),
-          label: 'Pending'
+        failed: {
+          count: t.failed,
+          percent: calcPercent(t.failed, t.sent),
+          children: {
+            hardBounce: {
+              count: t.hardBounce,
+              percent: calcPercent(t.hardBounce, t.failed),
+              label: "Hard Bounce",
+            },
+            blocked: {
+              count: t.blocked,
+              percent: calcPercent(t.blocked, t.failed),
+              label: "Blocked",
+            },
+            spam: {
+              count: t.spam,
+              percent: calcPercent(t.spam, t.failed),
+              label: "Spam",
+            },
+            error: {
+              count: t.error,
+              percent: calcPercent(t.error, t.failed),
+              label: "Error",
+            },
+            invalid: {
+              count: t.invalid,
+              percent: calcPercent(t.invalid, t.failed),
+              label: "Invalid",
+            },
+          },
         },
         rescheduled: {
           count: t.rescheduled,
           percent: calcPercent(t.rescheduled, t.sent),
           children: {
-            softBounce: { count: t.softBounce, percent: calcPercent(t.softBounce, t.rescheduled), label: 'Soft Bounce' },
-            deferred: { count: t.deferred, percent: calcPercent(t.deferred, t.rescheduled), label: 'Deferred' }
-          }
+            softBounce: {
+              count: t.softBounce,
+              percent: calcPercent(t.softBounce, t.rescheduled),
+              label: "Soft Bounce",
+            },
+            deferred: {
+              count: t.deferred,
+              percent: calcPercent(t.deferred, t.rescheduled),
+              label: "Deferred",
+            },
+          },
         },
-        failed: {
-          count: t.hardBounce + t.blocked + t.spam,
-          percent: calcPercent(t.hardBounce + t.blocked + t.spam, t.sent),
+        terminal: {
+          count: t.terminal,
+          percent: calcPercent(t.terminal, t.sent),
           children: {
-            hardBounce: { count: t.hardBounce, percent: calcPercent(t.hardBounce, t.failed), label: 'Hard Bounce' },
-            blocked: { count: t.blocked, percent: calcPercent(t.blocked, t.failed), label: 'Blocked' },
-            spam: { count: t.spam, percent: calcPercent(t.spam, t.failed), label: 'Spam' }
-          }
-        }
+            unsubscribed: {
+              count: t.unsubscribed,
+              percent: calcPercent(t.unsubscribed, t.terminal),
+              label: "Unsubscribed",
+            },
+            complaint: {
+              count: t.complaint,
+              percent: calcPercent(t.complaint, t.terminal),
+              label: "Complaint",
+            },
+            dead: {
+              count: t.dead,
+              percent: calcPercent(t.dead, t.terminal),
+              label: "Dead",
+            },
+          },
+        },
+        pending: {
+          count: t.pending,
+          percent: calcPercent(t.pending, t.sent),
+          label: "Pending",
+          children: {
+            initial: {
+              count: byType.Initial.pending,
+              percent: calcPercent(byType.Initial.pending, t.pending),
+              label: "Initial",
+            },
+            followup: {
+              count: byType.Followup.pending,
+              percent: calcPercent(byType.Followup.pending, t.pending),
+              label: "Followup",
+            },
+            manual: {
+              count: byType.Manual.pending,
+              percent: calcPercent(byType.Manual.pending, t.pending),
+              label: "Manual",
+            },
+            conditional: {
+              count: byType.Conditional?.pending || 0,
+              percent: calcPercent(byType.Conditional?.pending || 0, t.pending),
+              label: "Conditional",
+            },
+          },
+        },
       };
-console.log("byType====", byType);
 
       const formattedByType = {
-        Initial: { ...byType.Initial, pendingReschedule: byType.Initial.rescheduled || 0 },
-        Followup: { ...byType.Followup, pendingReschedule: byType.Followup.rescheduled || 0 },
-        Manual: { ...byType.Manual, pendingReschedule: byType.Manual.rescheduled || 0 },
-        Conditional: { 
-          ...(byType.Conditional || { sent: 0, delivered: 0, opened: 0, clicked: 0, rescheduled: 0, failed: 0, softBounce: 0, hardBounce: 0, blocked: 0 }), 
-          pendingReschedule: byType.Conditional?.rescheduled || 0 
-        }
+        Initial: { ...byType.Initial },
+        Followup: { ...byType.Followup },
+        Manual: { ...byType.Manual },
+        Conditional: {
+          ...(byType.Conditional || {
+            sent: 0,
+            delivered: 0,
+            opened: 0,
+            clicked: 0,
+            rescheduled: 0,
+            failed: 0,
+            softBounce: 0,
+            hardBounce: 0,
+            blocked: 0,
+            pending: 0,
+          }),
+        },
       };
 
       res.status(200).json({
         period: { start, end },
         totals: {
+          // SENT: All emails attempted
           sent: t.sent,
+          // DELIVERED: Successfully delivered
           delivered: t.delivered,
           opened: t.opened,
           clicked: t.clicked,
-          softBounce: t.softBounce,
-          deferred: t.deferred,
+          // FAILED: Delivery failures
+          failed: t.failed,
           hardBounce: t.hardBounce,
           blocked: t.blocked,
           spam: t.spam,
-          failed: t.hardBounce + t.blocked + t.spam,
+          error: t.error,
+          invalid: t.invalid,
+          // RESCHEDULED: Pending retry
+          rescheduled: t.rescheduled,
+          softBounce: t.softBounce,
+          deferred: t.deferred,
+          // TERMINAL: Lead marked as terminal
+          terminal: t.terminal,
+          unsubscribed: t.unsubscribed,
+          complaint: t.complaint,
+          dead: t.dead,
+          // PENDING: Not yet sent
           pending: t.pending,
-          pendingReschedule: t.rescheduled
         },
         byType: formattedByType,
         hierarchy,
-        rates: unified.rates
+        rates: unified.rates,
       });
     } catch (error) {
       console.error('Get hierarchical analytics error:', error);

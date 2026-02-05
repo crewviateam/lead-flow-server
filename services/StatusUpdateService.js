@@ -22,9 +22,13 @@ class StatusUpdateService {
    */
   async updateStatus(leadId, event, details = {}, emailJobId = null, emailType = null) {
     try {
-      console.log(`[StatusUpdateService] Processing ${event} for lead ${leadId}`);
-      
-      const lead = await LeadRepository.findById(leadId, { include: { emailSchedule: true } });
+      console.log(
+        `[StatusUpdateService] Processing ${event} for lead ${leadId}`,
+      );
+
+      const lead = await LeadRepository.findById(leadId, {
+        include: { emailSchedule: true },
+      });
       if (!lead) {
         console.error(`[StatusUpdateService] Lead ${leadId} not found`);
         return null;
@@ -39,20 +43,59 @@ class StatusUpdateService {
       }
 
       // 1. Add Event to history
-      await LeadRepository.addEvent(leadId, event, details, emailType, emailJobId);
+      await LeadRepository.addEvent(
+        leadId,
+        event,
+        details,
+        emailType,
+        emailJobId,
+      );
 
       // 2. Update counters based on event type
       await this._updateCounters(leadId, event);
 
       // 3. Recalculate and update lead status
       const newStatus = await this._recalculateStatus(leadId, event, emailType);
-      
-      // 4. Fetch updated lead
-      const updatedLead = await LeadRepository.findById(leadId, { include: { emailSchedule: true } });
 
-      console.log(`[StatusUpdateService] Updated lead ${updatedLead.email} status to: ${updatedLead.status}`);
+      // 4. AUTO-RESUME: If a high-priority mail completed/cancelled, resume paused jobs
+      // This ensures followups/manual mails resume after conditional completes
+      if (
+        emailType &&
+        RulebookService.triggersAutoResume(emailType) &&
+        RulebookService.shouldTriggerAutoResume(event)
+      ) {
+        console.log(
+          `[StatusUpdateService] Triggering auto-resume for paused jobs after ${emailType} -> ${event}`,
+        );
+        try {
+          const resumeResult = await RulebookService.resumePausedJobsAfter(
+            leadId,
+            emailType,
+            event,
+          );
+          if (resumeResult.resumedCount > 0) {
+            console.log(
+              `[StatusUpdateService] ✓ Auto-resumed ${resumeResult.resumedCount} paused jobs`,
+            );
+          }
+        } catch (resumeErr) {
+          console.error(
+            `[StatusUpdateService] Auto-resume error:`,
+            resumeErr.message,
+          );
+          // Don't throw - main update succeeded
+        }
+      }
+
+      // 5. Fetch updated lead
+      const updatedLead = await LeadRepository.findById(leadId, {
+        include: { emailSchedule: true },
+      });
+
+      console.log(
+        `[StatusUpdateService] Updated lead ${updatedLead.email} status to: ${updatedLead.status}`,
+      );
       return updatedLead;
-
     } catch (error) {
       console.error(`[StatusUpdateService] Error updating status: ${error.message}`, error);
       throw error;
@@ -174,25 +217,43 @@ class StatusUpdateService {
       return currentStatus;
     }
     
-    // RULE X: CONDITIONAL EMAIL SPECIAL HANDLING
-    // For conditional emails, ALL status events (sent/delivered/opened/clicked/failed) 
-    // should update lead status to 'condition {trigger}:{event}' format
+    // RULE X: CONDITIONAL EMAIL STATUS HANDLING
+    // For conditional emails, check if there's a DIFFERENT pending job first
+    // If yes, show that pending job's status instead of the conditional status
+    // This ensures lead status reflects the next scheduled action after conditional completes
     if (emailType && emailType.startsWith('conditional:')) {
-      // Get the trigger event from the job metadata
-      const emailJob = await prisma.emailJob.findFirst({
-        where: { 
-          leadId: parseInt(leadId), 
-          type: emailType,
-          status: { in: [...RulebookService.getSuccessfullySentStatuses(), 'sent', event] }
+      // FIRST: Check if there's another pending job (not this conditional)
+      const otherPendingJob = await prisma.emailJob.findFirst({
+        where: {
+          leadId: parseInt(leadId),
+          status: { in: RulebookService.getActiveStatuses() },
+          NOT: { type: emailType }  // Exclude this conditional email
         },
-        orderBy: { updatedAt: 'desc' }
+        orderBy: { scheduledFor: 'asc' }
       });
       
-      const triggerEvent = emailJob?.metadata?.triggerEvent || 'opened';
-      const newStatus = RulebookService.formatConditionalStatus(triggerEvent, event);
-      console.log(`[StatusUpdateService] Conditional email ${emailType} - setting status to: ${newStatus}`);
-      await LeadRepository.updateStatus(leadId, newStatus);
-      return newStatus;
+      // If another job is pending OR if this event is 'delivered' (completion event),
+      // let the normal logic below handle it to show the next scheduled job
+      if (otherPendingJob || event === 'delivered' || event === 'cancelled') {
+        console.log(`[StatusUpdateService] Conditional ${emailType} has ${event}, checking for next pending job...`);
+        // Don't return early - continue to RULE 5 below to properly set status based on next pending job
+      } else {
+        // No other pending job and conditional is still in progress - show conditional status
+        const emailJob = await prisma.emailJob.findFirst({
+          where: { 
+            leadId: parseInt(leadId), 
+            type: emailType,
+            status: { in: [...RulebookService.getSuccessfullySentStatuses(), 'sent', 'pending', event] }
+          },
+          orderBy: { updatedAt: 'desc' }
+        });
+        
+        const triggerEvent = emailJob?.metadata?.triggerEvent || 'opened';
+        const newStatus = RulebookService.formatConditionalStatus(triggerEvent, event);
+        console.log(`[StatusUpdateService] Conditional email ${emailType} - setting status to: ${newStatus}`);
+        await LeadRepository.updateStatus(leadId, newStatus);
+        return newStatus;
+      }
     }
     
     // RULE 5: Check for pending jobs - scheduled status should show next action
