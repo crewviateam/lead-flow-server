@@ -37,12 +37,11 @@ class FCMService {
       // Try to initialize from environment variables
       const serviceAccountPath = process.env.FIREBASE_SERVICE_ACCOUNT_PATH;
       const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT;
-
       if (serviceAccountPath) {
         // Initialize from file path - resolve relative paths from project root
         const path = require("path");
         const resolvedPath = serviceAccountPath.startsWith(".")
-          ? path.resolve(__dirname, "..", serviceAccountPath)
+        ? path.resolve(__dirname, "..", serviceAccountPath)
           : serviceAccountPath;
         const serviceAccount = require(resolvedPath);
         admin.initializeApp({
