@@ -73,7 +73,7 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 // ============================================
 const allowedOrigins = process.env.ALLOWED_ORIGINS 
   ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim())
-  : ['http://localhost:5173', 'http://localhost:3000', 'https://lead-flow-client.vercel.app']; // Dev defaults
+  : ['http://localhost:5173', 'http://localhost:3000', 'https://lead-flow-client.vercel.app', 'https://outflow.crewvia.in']; // Dev defaults
 
 app.use((req, res, next) => {
   const origin = req.headers.origin;

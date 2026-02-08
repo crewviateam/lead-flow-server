@@ -10,64 +10,69 @@ const { prisma } = require('../lib/prisma');
 // ========================================
 
 const DEFAULT_RULEBOOK = {
-  version: '1.0.0',
+  version: "1.0.0",
   lastUpdated: new Date().toISOString(),
-  
+
   // ============================================================
   // SECTION 1: MAIL TYPE DEFINITIONS
   // Defines all types of emails in the system and their properties
   // ============================================================
   mailTypes: {
     initial: {
-      id: 'initial',
-      displayName: 'Initial Mail',
-      internalTypes: ['Initial Email', 'initial', 'initial_email'],
-      category: 'automated',
-      priority: 100,  // Highest priority - sends first
+      id: "initial",
+      displayName: "Initial Mail",
+      internalTypes: ["Initial Email", "initial", "initial_email"],
+      category: "automated",
+      priority: 100, // Highest priority - sends first
       canPause: false,
       canSkip: false,
       canReschedule: true,
       canCancel: true,
       canRetry: true,
       maxRetries: 3,
-      triggeredBy: 'lead_creation',
-      description: 'First email sent to a new lead'
+      triggeredBy: "lead_creation",
+      description: "First email sent to a new lead",
     },
     followup: {
-      id: 'followup',
-      displayName: 'Followup Mail',
-      internalTypes: ['First Followup', 'Second Followup', 'Third Followup', 'followup'],
-      category: 'automated',
+      id: "followup",
+      displayName: "Followup Mail",
+      internalTypes: [
+        "First Followup",
+        "Second Followup",
+        "Third Followup",
+        "followup",
+      ],
+      category: "automated",
       priority: 80,
       canPause: true,
       canSkip: true,
       canReschedule: true,
-      canCancel: false,  // Skippable jobs should use skip, not cancel
+      canCancel: false, // Skippable jobs should use skip, not cancel
       canRetry: true,
       maxRetries: 3,
-      triggeredBy: 'previous_email_delivered',
-      description: 'Automated followup emails in sequence'
+      triggeredBy: "previous_email_delivered",
+      description: "Automated followup emails in sequence",
     },
     conditional: {
-      id: 'conditional',
-      displayName: 'Conditional Mail',
-      internalTypes: ['conditional:', 'conditional'],
-      category: 'triggered',
-      priority: 95,  // Higher than followups - takes precedence
+      id: "conditional",
+      displayName: "Conditional Mail",
+      internalTypes: ["conditional:", "conditional"],
+      category: "triggered",
+      priority: 95, // Higher than followups - takes precedence
       canPause: false,
       canSkip: false,
       canReschedule: true,
       canCancel: true,
       canRetry: true,
       maxRetries: 3,
-      triggeredBy: 'engagement_event',
-      description: 'Emails triggered by recipient actions (open, click)'
+      triggeredBy: "engagement_event",
+      description: "Emails triggered by recipient actions (open, click)",
     },
     manual: {
-      id: 'manual',
-      displayName: 'Manual Mail',
-      internalTypes: ['manual', 'Manual'],
-      category: 'manual',
+      id: "manual",
+      displayName: "Manual Mail",
+      internalTypes: ["manual", "Manual"],
+      category: "manual",
       priority: 85,
       canPause: false,
       canSkip: false,
@@ -75,11 +80,11 @@ const DEFAULT_RULEBOOK = {
       canCancel: true,
       canRetry: true,
       maxRetries: 3,
-      triggeredBy: 'user_action',
-      description: 'User-created manual emails'
-    }
+      triggeredBy: "user_action",
+      description: "User-created manual emails",
+    },
   },
-  
+
   // ============================================================
   // SECTION 2: STATUS DEFINITIONS
   // All possible statuses for email jobs and their properties
@@ -87,305 +92,329 @@ const DEFAULT_RULEBOOK = {
   statuses: {
     // ACTIVE/PENDING STATES
     pending: {
-      display: 'Scheduled',
-      color: '#eab308',
-      bgColor: 'rgba(234, 179, 8, 0.1)',
-      icon: 'clock',
+      display: "Scheduled",
+      color: "#eab308",
+      bgColor: "rgba(234, 179, 8, 0.1)",
+      icon: "clock",
       isTerminal: false,
       isActive: true,
       showInQueue: true,
-      allowedTransitions: ['sent', 'cancelled', 'paused', 'rescheduled']
+      allowedTransitions: ["sent", "cancelled", "paused", "rescheduled"],
     },
     queued: {
-      display: 'Queued',
-      color: '#f97316',
-      bgColor: 'rgba(249, 115, 22, 0.1)',
-      icon: 'queue',
+      display: "Queued",
+      color: "#f97316",
+      bgColor: "rgba(249, 115, 22, 0.1)",
+      icon: "queue",
       isTerminal: false,
       isActive: true,
       showInQueue: true,
-      allowedTransitions: ['sent', 'failed', 'cancelled']
+      allowedTransitions: ["sent", "failed", "cancelled"],
     },
     scheduled: {
-      display: 'Scheduled',
-      color: '#eab308',
-      bgColor: 'rgba(234, 179, 8, 0.1)',
-      icon: 'calendar',
+      display: "Scheduled",
+      color: "#eab308",
+      bgColor: "rgba(234, 179, 8, 0.1)",
+      icon: "calendar",
       isTerminal: false,
       isActive: true,
       showInQueue: true,
-      allowedTransitions: ['pending', 'cancelled', 'rescheduled']
+      allowedTransitions: ["pending", "cancelled", "rescheduled"],
     },
     rescheduled: {
-      display: 'Rescheduled',
-      color: '#06b6d4',
-      bgColor: 'rgba(6, 182, 212, 0.1)',
-      icon: 'refresh',
+      display: "Rescheduled",
+      color: "#06b6d4",
+      bgColor: "rgba(6, 182, 212, 0.1)",
+      icon: "refresh",
       isTerminal: false,
       isActive: true,
       showInQueue: true,
-      allowedTransitions: ['pending', 'sent', 'cancelled']
+      allowedTransitions: ["pending", "sent", "cancelled"],
     },
     paused: {
-      display: 'Paused',
-      color: '#f59e0b',
-      bgColor: 'rgba(245, 158, 11, 0.1)',
-      icon: 'pause',
+      display: "Paused",
+      color: "#f59e0b",
+      bgColor: "rgba(245, 158, 11, 0.1)",
+      icon: "pause",
       isTerminal: false,
       isActive: false,
       showInQueue: false,
-      allowedTransitions: ['pending', 'cancelled']
+      allowedTransitions: ["pending", "cancelled"],
     },
-    
+
     // SENT/DELIVERY STATES
     sent: {
-      display: 'Sent',
-      color: '#8b5cf6',
-      bgColor: 'rgba(139, 92, 246, 0.1)',
-      icon: 'send',
+      display: "Sent",
+      color: "#8b5cf6",
+      bgColor: "rgba(139, 92, 246, 0.1)",
+      icon: "send",
       isTerminal: false,
       isActive: false,
       showInQueue: false,
-      allowedTransitions: ['delivered', 'soft_bounce', 'hard_bounce', 'blocked', 'failed']
+      allowedTransitions: [
+        "delivered",
+        "soft_bounce",
+        "hard_bounce",
+        "blocked",
+        "failed",
+      ],
     },
     delivered: {
-      display: 'Delivered',
-      color: '#22c55e',
-      bgColor: 'rgba(34, 197, 94, 0.1)',
-      icon: 'check',
+      display: "Delivered",
+      color: "#22c55e",
+      bgColor: "rgba(34, 197, 94, 0.1)",
+      icon: "check",
       isTerminal: false,
       isActive: false,
       showInQueue: false,
-      allowedTransitions: ['opened', 'clicked', 'spam']
+      allowedTransitions: ["opened", "clicked", "spam"],
     },
-    
+
     // ENGAGEMENT STATES
     opened: {
-      display: 'Opened',
-      color: '#3b82f6',
-      bgColor: 'rgba(59, 130, 246, 0.1)',
-      icon: 'eye',
+      display: "Opened",
+      color: "#3b82f6",
+      bgColor: "rgba(59, 130, 246, 0.1)",
+      icon: "eye",
       isTerminal: false,
       isActive: false,
       showInQueue: false,
-      allowedTransitions: ['clicked']
+      allowedTransitions: ["clicked"],
     },
     unique_opened: {
-      display: 'Unique Open',
-      color: '#3b82f6',
-      bgColor: 'rgba(59, 130, 246, 0.1)',
-      icon: 'eye',
+      display: "Unique Open",
+      color: "#3b82f6",
+      bgColor: "rgba(59, 130, 246, 0.1)",
+      icon: "eye",
       isTerminal: false,
       isActive: false,
       showInQueue: false,
-      allowedTransitions: ['clicked']
+      allowedTransitions: ["clicked"],
     },
     clicked: {
-      display: 'Clicked',
-      color: '#a855f7',
-      bgColor: 'rgba(168, 85, 247, 0.1)',
-      icon: 'cursor',
+      display: "Clicked",
+      color: "#a855f7",
+      bgColor: "rgba(168, 85, 247, 0.1)",
+      icon: "cursor",
       isTerminal: false,
       isActive: false,
       showInQueue: false,
-      allowedTransitions: []
+      allowedTransitions: [],
     },
-    
+
     // TEMPORARY FAILURE STATES (can retry)
     soft_bounce: {
-      display: 'Soft Bounce',
-      color: '#eab308',
-      bgColor: 'rgba(234, 179, 8, 0.1)',
-      icon: 'alert',
+      display: "Soft Bounce",
+      color: "#eab308",
+      bgColor: "rgba(234, 179, 8, 0.1)",
+      icon: "alert",
       isTerminal: false,
       isActive: false,
       showInQueue: false,
       canRetry: true,
-      allowedTransitions: ['pending', 'rescheduled', 'failed']
+      allowedTransitions: ["pending", "rescheduled", "failed"],
     },
     deferred: {
-      display: 'Deferred',
-      color: '#eab308',
-      bgColor: 'rgba(234, 179, 8, 0.1)',
-      icon: 'clock',
+      display: "Deferred",
+      color: "#eab308",
+      bgColor: "rgba(234, 179, 8, 0.1)",
+      icon: "clock",
       isTerminal: false,
       isActive: false,
       showInQueue: false,
       canRetry: true,
-      allowedTransitions: ['pending', 'rescheduled', 'failed']
+      allowedTransitions: ["pending", "rescheduled", "failed"],
     },
-    
+
     // TERMINAL FAILURE STATES (cannot retry)
     hard_bounce: {
-      display: 'Hard Bounce',
-      color: '#ef4444',
-      bgColor: 'rgba(239, 68, 68, 0.1)',
-      icon: 'x-circle',
+      display: "Hard Bounce",
+      color: "#ef4444",
+      bgColor: "rgba(239, 68, 68, 0.1)",
+      icon: "x-circle",
       isTerminal: true,
       isActive: false,
       showInQueue: false,
       canRetry: false,
-      allowedTransitions: []
+      allowedTransitions: [],
     },
     failed: {
-      display: 'Failed',
-      color: '#ef4444',
-      bgColor: 'rgba(239, 68, 68, 0.1)',
-      icon: 'x-circle',
+      display: "Failed",
+      color: "#ef4444",
+      bgColor: "rgba(239, 68, 68, 0.1)",
+      icon: "x-circle",
       isTerminal: true,
       isActive: false,
       showInQueue: false,
       canRetry: true,
-      allowedTransitions: ['pending']
+      allowedTransitions: ["pending"],
     },
     blocked: {
-      display: 'Blocked',
-      color: '#ef4444',
-      bgColor: 'rgba(239, 68, 68, 0.1)',
-      icon: 'ban',
+      display: "Blocked",
+      color: "#ef4444",
+      bgColor: "rgba(239, 68, 68, 0.1)",
+      icon: "ban",
       isTerminal: true,
       isActive: false,
       showInQueue: false,
       canRetry: false,
-      allowedTransitions: []
+      allowedTransitions: [],
     },
     spam: {
-      display: 'Spam',
-      color: '#ef4444',
-      bgColor: 'rgba(239, 68, 68, 0.1)',
-      icon: 'alert-triangle',
+      display: "Spam",
+      color: "#ef4444",
+      bgColor: "rgba(239, 68, 68, 0.1)",
+      icon: "alert-triangle",
       isTerminal: true,
       isActive: false,
       showInQueue: false,
       canRetry: false,
-      allowedTransitions: []
+      allowedTransitions: [],
     },
-    
+
     // USER ACTION STATES
     cancelled: {
-      display: 'Cancelled',
-      color: '#6b7280',
-      bgColor: 'rgba(107, 114, 128, 0.1)',
-      icon: 'x',
+      display: "Cancelled",
+      color: "#6b7280",
+      bgColor: "rgba(107, 114, 128, 0.1)",
+      icon: "x",
       isTerminal: true,
       isActive: false,
       showInQueue: false,
       canRetry: true,
-      allowedTransitions: ['pending']
+      allowedTransitions: ["pending"],
     },
     skipped: {
-      display: 'Skipped',
-      color: '#6b7280',
-      bgColor: 'rgba(107, 114, 128, 0.1)',
-      icon: 'skip-forward',
+      display: "Skipped",
+      color: "#6b7280",
+      bgColor: "rgba(107, 114, 128, 0.1)",
+      icon: "skip-forward",
       isTerminal: true,
       isActive: false,
       showInQueue: false,
       canRetry: false,
-      allowedTransitions: []
+      allowedTransitions: [],
     },
-    
-    // ERROR STATES  
+
+    // ERROR STATES
     invalid: {
-      display: 'Invalid Email',
-      color: '#ef4444',
-      bgColor: 'rgba(239, 68, 68, 0.1)',
-      icon: 'alert-circle',
-      category: 'failed',
+      display: "Invalid Email",
+      color: "#ef4444",
+      bgColor: "rgba(239, 68, 68, 0.1)",
+      icon: "alert-circle",
+      category: "failed",
       isTerminal: true,
       isActive: false,
       showInQueue: false,
-      canRetry: false,  // Invalid email cannot be retried
+      canRetry: false, // Invalid email cannot be retried
       manualRetryOnly: true,
-      allowedTransitions: []
+      allowedTransitions: [],
     },
     error: {
-      display: 'Error',
-      color: '#ef4444',
-      bgColor: 'rgba(239, 68, 68, 0.1)',
-      icon: 'alert-triangle',
-      category: 'failed',
+      display: "Error",
+      color: "#ef4444",
+      bgColor: "rgba(239, 68, 68, 0.1)",
+      icon: "alert-triangle",
+      category: "failed",
       isTerminal: true,
       isActive: false,
       showInQueue: false,
       canRetry: true,
-      manualRetryOnly: true,  // Only manual retry, not auto
-      allowedTransitions: ['pending']
+      manualRetryOnly: true, // Only manual retry, not auto
+      allowedTransitions: ["pending"],
     },
-    
+
     // NEGATIVE ENGAGEMENT STATES (Special Handling Required)
     complaint: {
-      display: 'Spam Complaint',
-      color: '#dc2626',
-      bgColor: 'rgba(220, 38, 38, 0.1)',
-      icon: 'flag',
-      category: 'negative',
+      display: "Spam Complaint",
+      color: "#dc2626",
+      bgColor: "rgba(220, 38, 38, 0.1)",
+      icon: "flag",
+      category: "negative",
       isTerminal: true,
       isActive: false,
       showInQueue: false,
-      canRetry: true,  // Can retry but requires user confirmation
+      canRetry: true, // Can retry but requires user confirmation
       manualRetryOnly: true,
-      pausesFutureMails: true,  // CRITICAL: Stop all future mails
+      pausesFutureMails: true, // CRITICAL: Stop all future mails
       showInComplaintPage: true,
-      allowedTransitions: ['pending']
+      allowedTransitions: ["pending"],
     },
     unsubscribed: {
-      display: 'Unsubscribed',
-      color: '#9333ea',
-      bgColor: 'rgba(147, 51, 234, 0.1)',
-      icon: 'user-x',
-      category: 'negative',
+      display: "Unsubscribed",
+      color: "#9333ea",
+      bgColor: "rgba(147, 51, 234, 0.1)",
+      icon: "user-x",
+      category: "negative",
       isTerminal: true,
       isActive: false,
       showInQueue: false,
-      canRetry: true,  // Can retry but requires user confirmation
+      canRetry: true, // Can retry but requires user confirmation
       manualRetryOnly: true,
-      pausesFutureMails: true,  // CRITICAL: Stop all future mails
+      pausesFutureMails: true, // CRITICAL: Stop all future mails
       showInComplaintPage: true,
-      allowedTransitions: ['pending']
+      allowedTransitions: ["pending"],
     },
-    
+
     // DEAD STATE (Retry Limit Exceeded)
     dead: {
-      display: 'Dead',
-      color: '#4b5563',
-      bgColor: 'rgba(75, 85, 99, 0.1)',
-      icon: 'skull',
-      category: 'terminal',
+      display: "Dead",
+      color: "#4b5563",
+      bgColor: "rgba(75, 85, 99, 0.1)",
+      icon: "skull",
+      category: "terminal",
       isTerminal: true,
       isActive: false,
       showInQueue: false,
-      canRetry: false,  // Cannot retry - lead is dead
+      canRetry: false, // Cannot retry - lead is dead
       manualRetryOnly: false,
-      pausesFutureMails: true,  // CRITICAL: Stop all future mails
+      pausesFutureMails: true, // CRITICAL: Stop all future mails
       showInTerminalPage: true,
-      description: 'Lead exceeded maximum retry attempts - all future mails cancelled',
-      allowedTransitions: []  // No transitions from dead
-    }
+      description:
+        "Lead exceeded maximum retry attempts - all future mails cancelled",
+      allowedTransitions: [], // No transitions from dead
+    },
   },
-  
+
   // ============================================================
   // SECTION 2.5: STATUS GROUPS
   // Categorized groups for Resume/Retry/Auto-Resume logic
   // ============================================================
   statusGroups: {
     // Jobs that show RESUME button (temporary pause, no retry increment)
-    resumable: ['paused'],
-    
+    resumable: ["paused"],
+
     // Jobs that show RETRY button (permanent failure/cancellation, increments retry count)
-    retriable: ['cancelled', 'failed', 'soft_bounce', 'deferred', 'error', 'hard_bounce', 'blocked', 'complaint', 'unsubscribed', 'invalid'],
-    
+    retriable: [
+      "cancelled",
+      "failed",
+      "soft_bounce",
+      "deferred",
+      "error",
+      "hard_bounce",
+      "blocked",
+      "complaint",
+      "unsubscribed",
+      "invalid",
+    ],
+
     // Jobs with terminal failures that can retry with user confirmation
-    manualRetriable: ['hard_bounce', 'blocked', 'complaint', 'unsubscribed', 'invalid', 'error'],
-  
-    
+    manualRetriable: [
+      "hard_bounce",
+      "blocked",
+      "complaint",
+      "unsubscribed",
+      "invalid",
+      "error",
+    ],
+
     // High-priority mail types that trigger auto-resume when cancelled/completed
-    triggersAutoResume: ['conditional', 'manual'],
-    
+    triggersAutoResume: ["conditional", "manual"],
+
     // Statuses that should trigger auto-resume of paused jobs
-    autoResumeOnStatus: ['delivered', 'cancelled']
+    autoResumeOnStatus: ["delivered", "cancelled"],
   },
-  
+
   // ============================================================
   // SECTION 3: LEAD STATUS RULES
   // Rules for what status should be displayed on the Lead
@@ -394,87 +423,89 @@ const DEFAULT_RULEBOOK = {
     // FORBIDDEN STATUSES: These should NEVER appear as lead status
     // Engagement events are job-level, not lead-level
     forbiddenStatuses: [
-      'opened',
-      'unique_opened', 
-      'clicked', 
-      'delivered', 
-      'paused', 
-      'cancelled',
-      'skipped'
+      "opened",
+      "unique_opened",
+      "clicked",
+      "delivered",
+      "paused",
+      "cancelled",
+      "skipped",
     ],
-    
+
     // ALLOWED STATUSES: Only these can be shown as lead status
     allowedStatuses: [
-      'scheduled',
-      'rescheduled',
-      'sent',
-      'blocked',
-      'failed',
-      'hard_bounce',
-      'soft_bounce',
-      'spam'
+      "scheduled",
+      "rescheduled",
+      "sent",
+      "blocked",
+      "failed",
+      "hard_bounce",
+      "soft_bounce",
+      "spam",
+      "invalid",
+      "error",
     ],
-    
+
     // SPECIAL LEAD STATUSES: Non-email statuses
     specialStatuses: [
-      'frozen',
-      'converted',
-      'idle',
-      'sequence_complete',
-      'unsubscribed'
+      "frozen",
+      "converted",
+      "idle",
+      "sequence_complete",
+      "unsubscribed",
     ],
-    
+
     // DEFAULT STATUS: When no other status applies
-    defaultStatus: 'idle',
-    
+    defaultStatus: "idle",
+
     // STATUS FORMAT: How lead status should be displayed
     // Format: {type}:{status} e.g., "Followup Mail:scheduled"
-    statusFormat: '{simplifiedType}:{status}',
-    
+    statusFormat: "{simplifiedType}:{status}",
+
     // PRIORITY ORDER: Higher number = higher priority (shows this status)
     priority: {
       // Terminal statuses - highest priority
       converted: 100,
       unsubscribed: 99,
-      
+
       // Frozen state
       frozen: 95,
-      
+
       // Failure states - should be visible
       blocked: 90,
       hard_bounce: 89,
       failed: 88,
       spam: 87,
       soft_bounce: 86,
-      
+
       // Scheduled states - most common display
       scheduled: 80,
       rescheduled: 79,
       pending: 78,
-      
+
       // Sent state
       sent: 70,
-      
+
       // Complete
       sequence_complete: 60,
-      
+
       // Default
-      idle: 10
+      idle: 10,
     },
-    
+
     // WHEN TO UPDATE LEAD STATUS
     updateOn: {
       jobScheduled: true,
       jobSent: true,
       jobFailed: true,
-      jobCancelled: true,  // Will look for next scheduled job
+      jobCancelled: true, // Will look for next scheduled job
       jobCompleted: false, // Engagement events don't update lead status
       leadFrozen: true,
       leadConverted: true,
-      leadUnfrozen: true
-    }
+      leadUnfrozen: true,
+    },
   },
-  
+
   // ============================================================
   // SECTION 4: TRIGGER RULES
   // What events trigger what actions
@@ -482,17 +513,17 @@ const DEFAULT_RULEBOOK = {
   triggerRules: {
     // CONDITIONAL EMAIL TRIGGERS
     // These webhook events trigger conditional email evaluation
-    conditionalTriggerEvents: ['opened', 'unique_opened', 'clicked'],
-    
+    conditionalTriggerEvents: ["opened", "unique_opened", "clicked"],
+
     // FOLLOWUP TRIGGERS
     // These events trigger the next followup to be scheduled
-    followupTriggerEvents: ['delivered'],
-    
+    followupTriggerEvents: ["delivered"],
+
     // RESCHEDULE TRIGGERS
     // These events cause automatic rescheduling
-    rescheduleEvents: ['soft_bounce', 'deferred'],
+    rescheduleEvents: ["soft_bounce", "deferred"],
     rescheduleDelayHours: 2, // Hours before retry
-    
+
     // SCORE ADJUSTMENT TRIGGERS
     scoreAdjustments: {
       opened: 5,
@@ -502,25 +533,25 @@ const DEFAULT_RULEBOOK = {
       soft_bounce: -1,
       hard_bounce: -10,
       spam: -20,
-      blocked: -20
+      blocked: -20,
     },
-    
+
     // WEBHOOK EVENTS TO PROCESS
     processedWebhookEvents: [
-      'sent',
-      'delivered',
-      'opened',
-      'unique_opened',
-      'clicked',
-      'soft_bounce',
-      'hard_bounce',
-      'blocked',
-      'spam',
-      'deferred',
-      'error'
-    ]
+      "sent",
+      "delivered",
+      "opened",
+      "unique_opened",
+      "clicked",
+      "soft_bounce",
+      "hard_bounce",
+      "blocked",
+      "spam",
+      "deferred",
+      "error",
+    ],
   },
-  
+
   // ============================================================
   // SECTION 5: ACTION RULES
   // Side effects when certain actions are performed
@@ -533,67 +564,67 @@ const DEFAULT_RULEBOOK = {
       pausePendingConditionals: false,
       checkRateLimit: true,
       updateLeadStatus: true,
-      createEventHistory: true
+      createEventHistory: true,
     },
-    
+
     // WHEN CONDITIONAL EMAIL TRIGGERS
     conditionalEmailActions: {
-      preventDuplicates: true,  // Don't create if already exists
-      cancelPendingFollowupsIfConfigured: true,  // Based on conditional email config
+      preventDuplicates: true, // Don't create if already exists
+      cancelPendingFollowupsIfConfigured: true, // Based on conditional email config
       pausePendingFollowupsIfConfigured: false,
       checkRateLimit: true,
       updateLeadStatus: true,
-      createEventHistory: true
+      createEventHistory: true,
     },
-    
+
     // WHEN RESUMING FOLLOWUPS
     resumeFollowupActions: {
-      checkForConditionalEmails: true,  // Don't schedule if conditional exists
-      checkForManualEmails: true,       // Don't schedule if manual exists
+      checkForConditionalEmails: true, // Don't schedule if conditional exists
+      checkForManualEmails: true, // Don't schedule if manual exists
       deleteOldPausedJobs: true,
       scheduleNextFollowup: true,
       updateLeadStatus: true,
-      createEventHistory: true
+      createEventHistory: true,
     },
-    
+
     // WHEN PAUSING FOLLOWUPS
     pauseFollowupActions: {
-      pauseOnlyFollowups: true,  // Don't pause conditionals or manuals
+      pauseOnlyFollowups: true, // Don't pause conditionals or manuals
       updateJobStatus: true,
       updateLeadStatus: true,
-      createEventHistory: true
+      createEventHistory: true,
     },
-    
+
     // WHEN JOB IS CANCELLED
     cancelJobActions: {
       lookForNextScheduledJob: true,
       updateLeadStatusToNextJob: true,
       setIdleIfNoJobs: true,
-      createEventHistory: true
+      createEventHistory: true,
     },
-    
+
     // WHEN FREEZING LEAD
     freezeActions: {
       cancelAllPendingJobs: true,
       setLeadStatusToFrozen: true,
-      createEventHistory: true
+      createEventHistory: true,
     },
-    
+
     // WHEN UNFREEZING LEAD
     unfreezeActions: {
       rescheduleNextFollowup: true,
       updateLeadStatus: true,
-      createEventHistory: true
+      createEventHistory: true,
     },
-    
+
     // WHEN CONVERTING LEAD
     convertActions: {
       cancelAllPendingJobs: true,
       setLeadStatusToConverted: true,
       preventFutureEmails: true,
-      createEventHistory: true
+      createEventHistory: true,
     },
-    
+
     // WHEN RETRYING A JOB
     retryJobActions: {
       createNewJob: true,
@@ -601,9 +632,9 @@ const DEFAULT_RULEBOOK = {
       incrementRetryCount: true,
       checkMaxRetries: true,
       updateLeadStatus: true,
-      createEventHistory: true
+      createEventHistory: true,
     },
-    
+
     // WHEN RESCHEDULING A JOB
     rescheduleJobActions: {
       cancelOldJob: true,
@@ -611,39 +642,39 @@ const DEFAULT_RULEBOOK = {
       markAsRescheduled: true,
       checkRateLimit: true,
       updateLeadStatus: true,
-      createEventHistory: true
-    }
+      createEventHistory: true,
+    },
   },
-  
+
   // ============================================================
   // SECTION 6: DISPLAY RULES
   // How things should be displayed in the UI
   // ============================================================
   displayRules: {
     // TIMELINE DISPLAY
-    groupTimelineByType: true,  // Show one box per mail type
-    showCancelledInTimeline: false,  // Hide cancelled jobs
-    prioritizeActiveJobs: true,  // Show pending/scheduled over cancelled
-    
+    groupTimelineByType: true, // Show one box per mail type
+    showCancelledInTimeline: false, // Hide cancelled jobs
+    prioritizeActiveJobs: true, // Show pending/scheduled over cancelled
+
     // TYPE NAME DISPLAY
-    useSimplifiedTypeNames: true,  // "Followup Mail" instead of "First Followup"
-    
+    useSimplifiedTypeNames: true, // "Followup Mail" instead of "First Followup"
+
     // STATUS FORMAT
-    leadStatusFormat: '{type}:{status}',  // "Followup Mail:scheduled"
-    queueStatusFormat: '{type}:{status}',  // "First Followup:Pending"
-    
+    leadStatusFormat: "{type}:{status}", // "Followup Mail:scheduled"
+    queueStatusFormat: "{type}:{status}", // "First Followup:Pending"
+
     // CONDITIONAL EMAIL STATUS FORMAT
-    conditionalStatusFormat: 'condition {trigger}:{status}',  // "condition opened:scheduled"
+    conditionalStatusFormat: "condition {trigger}:{status}", // "condition opened:scheduled"
     useConditionFormatInQueue: true,
-    useConditionFormatInLeadStatus: true,  // Use "condition opened:scheduled" format for lead status
-    
+    useConditionFormatInLeadStatus: true, // Use "condition opened:scheduled" format for lead status
+
     // DATE/TIME DISPLAY
-    useRelativeTime: true,  // "in 2 hours" instead of "10:30 AM"
-    timezone: 'lead',  // Use lead's timezone for display
-    dateFormat: 'MMM DD, YYYY',
-    timeFormat: 'hh:mm A'
+    useRelativeTime: true, // "in 2 hours" instead of "10:30 AM"
+    timezone: "lead", // Use lead's timezone for display
+    dateFormat: "MMM DD, YYYY",
+    timeFormat: "hh:mm A",
   },
-  
+
   // ============================================================
   // SECTION 7: VALIDATION RULES
   // Rules for validating data and preventing errors
@@ -653,22 +684,22 @@ const DEFAULT_RULEBOOK = {
     preventDuplicateConditionals: true,
     preventDuplicateFollowups: true,
     preventDuplicateInitials: true,
-    
+
     // RATE LIMITING
     enforceRateLimits: true,
     maxEmailsPerWindow: 2,
     windowMinutes: 15,
-    
+
     // BUSINESS HOURS
     enforceBusinessHours: true,
     defaultBusinessHoursStart: 9,
     defaultBusinessHoursEnd: 18,
-    
+
     // RETRY LIMITS
     maxRetriesPerJob: 3,
-    retryDelayMinutes: 30
+    retryDelayMinutes: 30,
   },
-  
+
   // ============================================================
   // SECTION 8: NOTIFICATION RULES
   // When to send notifications
@@ -677,11 +708,11 @@ const DEFAULT_RULEBOOK = {
     notifyOnBounce: true,
     notifyOnBlock: true,
     notifyOnSpam: true,
-    notifyOnHighEngagement: true,  // Multiple clicks/opens
+    notifyOnHighEngagement: true, // Multiple clicks/opens
     notifyOnSequenceComplete: false,
-    notifyOnConversion: true
+    notifyOnConversion: true,
   },
-  
+
   // ============================================================
   // SECTION 9: STATUS GROUPS
   // Single Source of Truth for all status arrays used in queries
@@ -689,86 +720,208 @@ const DEFAULT_RULEBOOK = {
   // ============================================================
   statusGroups: {
     // Active/Pending jobs - waiting to be sent
-    active: ['pending', 'queued', 'scheduled', 'rescheduled', 'deferred'],
-    
+    active: ["pending", "queued", "scheduled", "rescheduled", "deferred"],
+
     // Jobs that can be cancelled by user
-    cancellable: ['pending', 'queued', 'scheduled', 'rescheduled', 'paused'],
-    
+    cancellable: ["pending", "queued", "scheduled", "rescheduled", "paused"],
+
     // Jobs that can be rescheduled
-    reschedulable: ['pending', 'queued', 'scheduled', 'rescheduled', 'deferred', 'failed', 'soft_bounce', 'hard_bounce', 'blocked'],
-    
+    reschedulable: [
+      "pending",
+      "queued",
+      "scheduled",
+      "rescheduled",
+      "deferred",
+      "failed",
+      "soft_bounce",
+      "hard_bounce",
+      "blocked",
+    ],
+
     // Failure statuses - job failed to deliver
-    failure: ['blocked', 'failed', 'hard_bounce', 'spam', 'bounced'],
-    
+    failure: ["blocked", "failed", "hard_bounce", "spam", "bounced"],
+
     // Hard failure - cannot retry automatically
-    hardFailure: ['blocked', 'hard_bounce', 'spam'],
-    
+    hardFailure: ["blocked", "hard_bounce", "spam"],
+
     // Soft failure - can retry automatically
-    softFailure: ['soft_bounce', 'deferred'],
-    
+    softFailure: ["soft_bounce", "deferred"],
+
     // Terminal statuses - job lifecycle complete
-    terminal: ['delivered', 'opened', 'clicked', 'cancelled', 'skipped', 'hard_bounce', 'blocked', 'spam'],
-    
+    terminal: [
+      "delivered",
+      "opened",
+      "clicked",
+      "cancelled",
+      "skipped",
+      "hard_bounce",
+      "blocked",
+      "spam",
+    ],
+
     // Sent but not terminal - waiting for engagement
-    sentNotTerminal: ['sent', 'delivered', 'opened', 'clicked'],
-    
+    sentNotTerminal: ["sent", "delivered", "opened", "clicked"],
+
     // All non-terminal statuses that count as "in progress"
-    inProgress: ['pending', 'queued', 'scheduled', 'rescheduled', 'sent', 'delivered', 'opened', 'clicked'],
-    
+    inProgress: [
+      "pending",
+      "queued",
+      "scheduled",
+      "rescheduled",
+      "sent",
+      "delivered",
+      "opened",
+      "clicked",
+    ],
+
     // Statuses for duplicate checking (don't create new job if exists with these)
-    existingNonCancelled: ['pending', 'queued', 'scheduled', 'rescheduled', 'sent', 'delivered', 'opened', 'clicked'],
-    
+    existingNonCancelled: [
+      "pending",
+      "queued",
+      "scheduled",
+      "rescheduled",
+      "sent",
+      "delivered",
+      "opened",
+      "clicked",
+    ],
+
     // Engagement events
-    engagement: ['opened', 'unique_opened', 'clicked'],
-    
+    engagement: ["opened", "unique_opened", "clicked"],
+
     // Statuses that should show in email queue
-    showInQueue: ['pending', 'queued', 'scheduled', 'rescheduled', 'deferred', 'paused'],
-    
+    showInQueue: [
+      "pending",
+      "queued",
+      "scheduled",
+      "rescheduled",
+      "deferred",
+      "paused",
+    ],
+
     // Processed/completed statuses for metrics
-    processed: ['sent', 'delivered', 'opened', 'clicked', 'cancelled', 'skipped', 'hard_bounce', 'soft_bounce', 'spam', 'blocked', 'failed', 'error', 'invalid', 'complaint', 'unsubscribed'],
-    
+    processed: [
+      "sent",
+      "delivered",
+      "opened",
+      "clicked",
+      "cancelled",
+      "skipped",
+      "hard_bounce",
+      "soft_bounce",
+      "spam",
+      "blocked",
+      "failed",
+      "error",
+      "invalid",
+      "complaint",
+      "unsubscribed",
+    ],
+
     // Retriable statuses - terminal failures that can be manually retried
-    retriable: ['failed', 'bounced', 'soft_bounce', 'hard_bounce', 'cancelled', 'deferred', 'blocked', 'spam', 'rescheduled', 'error', 'complaint', 'unsubscribed'],
-    
+    retriable: [
+      "failed",
+      "bounced",
+      "soft_bounce",
+      "hard_bounce",
+      "cancelled",
+      "deferred",
+      "blocked",
+      "spam",
+      "rescheduled",
+      "error",
+      "complaint",
+      "unsubscribed",
+    ],
+
     // AUTO-RETRIABLE: System automatically retries with exponential backoff
-    autoRetryable: ['soft_bounce', 'deferred'],
-    
+    autoRetryable: ["soft_bounce", "deferred"],
+
     // MANUAL-RETRY-ONLY: User must manually trigger retry
-    manualRetryOnly: ['hard_bounce', 'blocked', 'error', 'invalid', 'spam', 'complaint', 'unsubscribed', 'failed'],
-    
+    manualRetryOnly: [
+      "hard_bounce",
+      "blocked",
+      "error",
+      "invalid",
+      "spam",
+      "complaint",
+      "unsubscribed",
+      "failed",
+    ],
+
     // NEGATIVE STATUSES: Show in complaint/unsubscribed page, pause future mails
-    negative: ['complaint', 'unsubscribed'],
-    
+    negative: ["complaint", "unsubscribed"],
+
     // Pending only (for email queue filtering - active jobs awaiting delivery)
-    pendingOnly: ['pending', 'queued'],
-    
+    pendingOnly: ["pending", "queued"],
+
     // Completed/history statuses (for showing in completed email list)
-    completedHistory: ['sent', 'delivered', 'opened', 'clicked', 'bounced', 'hard_bounce', 'soft_bounce', 'failed', 'cancelled', 'rescheduled', 'error', 'invalid', 'complaint', 'unsubscribed'],
-    
+    completedHistory: [
+      "sent",
+      "delivered",
+      "opened",
+      "clicked",
+      "bounced",
+      "hard_bounce",
+      "soft_bounce",
+      "failed",
+      "cancelled",
+      "rescheduled",
+      "error",
+      "invalid",
+      "complaint",
+      "unsubscribed",
+    ],
+
     // Awaiting delivery (for bounce/click handlers - jobs to cancel when engagement received)
-    awaitingDelivery: ['pending', 'queued', 'deferred'],
-    
+    awaitingDelivery: ["pending", "queued", "deferred"],
+
     // Successfully sent statuses (for metrics and follow-up calculations)
-    successfullySent: ['sent', 'delivered', 'opened', 'clicked'],
-    
+    successfullySent: ["sent", "delivered", "opened", "clicked"],
+
     // All statuses except cancelled and skipped (for analytics counts)
-    allExceptCancelledSkipped: ['sent', 'delivered', 'opened', 'clicked', 'bounced', 'failed', 'hard_bounce', 'scheduled', 'soft_bounce', 'deferred', 'blocked', 'spam', 'error', 'invalid', 'complaint', 'unsubscribed', 'dead'],
-    
+    allExceptCancelledSkipped: [
+      "sent",
+      "delivered",
+      "opened",
+      "clicked",
+      "bounced",
+      "failed",
+      "hard_bounce",
+      "scheduled",
+      "soft_bounce",
+      "deferred",
+      "blocked",
+      "spam",
+      "error",
+      "invalid",
+      "complaint",
+      "unsubscribed",
+      "dead",
+    ],
+
     // TERMINAL STATES: Lead journey has ended (for Terminal States page)
-    terminalStates: ['dead', 'unsubscribed', 'complaint'],
-    
+    terminalStates: ["dead", "unsubscribed", "complaint"],
+
     // PAUSES FUTURE MAILS: No more emails should be sent
-    pausesFutureMails: ['dead', 'unsubscribed', 'complaint'],
-    
+    pausesFutureMails: ["dead", "unsubscribed", "complaint"],
+
     // AUTO-RESUME ON STATUS: Which statuses trigger resuming paused jobs
     // Only 'delivered' and 'cancelled' should trigger resume
     // NOTE: 'soft_bounce', 'rescheduled' should NOT trigger resume (mail still active)
-    autoResumeOnStatus: ['delivered', 'cancelled'],
-    
+    autoResumeOnStatus: ["delivered", "cancelled"],
+
     // FAILURE STATUSES: Require manual intervention before resuming
-    failureStatuses: ['hard_bounce', 'blocked', 'spam', 'invalid', 'error', 'failed']
+    failureStatuses: [
+      "hard_bounce",
+      "blocked",
+      "spam",
+      "invalid",
+      "error",
+      "failed",
+    ],
   },
-  
+
   // ============================================================
   // SECTION 10: EVENT CATEGORIES
   // Single Source of Truth for classifying webhook events
@@ -779,51 +932,66 @@ const DEFAULT_RULEBOOK = {
     // SUCCESS EVENTS: Increment score, trigger next steps
     // Handler: scheduleNext, triggerConditional
     success: {
-      events: ['delivered', 'opened', 'clicked'],
-      description: 'Positive engagement events that advance the lead journey',
+      events: ["delivered", "opened", "clicked"],
+      description: "Positive engagement events that advance the lead journey",
       scoreAdjustments: {
         delivered: 2,
         opened: 5,
-        clicked: 10
+        clicked: 10,
       },
       actions: {
-        delivered: ['scheduleNextMail', 'resumePausedMails'],
-        opened: ['triggerConditional', 'pauseOtherMails', 'incrementScore'],
-        clicked: ['triggerConditional', 'pauseOtherMails', 'incrementScore', 'cancelFollowups']
-      }
+        delivered: ["scheduleNextMail", "resumePausedMails"],
+        opened: ["triggerConditional", "pauseOtherMails", "incrementScore"],
+        clicked: [
+          "triggerConditional",
+          "pauseOtherMails",
+          "incrementScore",
+          "cancelFollowups",
+        ],
+      },
     },
-    
+
     // AUTO-RESCHEDULE EVENTS: System automatically retries
     // Handler: incrementRetry, checkLimit, scheduleWithDelay
     autoReschedule: {
-      events: ['soft_bounce', 'deferred'],
-      description: 'Temporary failures that auto-reschedule with smart delay',
-      actions: ['incrementRetryCount', 'checkRetryLimit', 'calculateSmartDelay', 'reschedule'],
-      onMaxRetriesExceeded: 'markAsDead'
+      events: ["soft_bounce", "deferred"],
+      description: "Temporary failures that auto-reschedule with smart delay",
+      actions: [
+        "incrementRetryCount",
+        "checkRetryLimit",
+        "calculateSmartDelay",
+        "reschedule",
+      ],
+      onMaxRetriesExceeded: "markAsDead",
     },
-    
+
     // SPAM EVENTS: Lead opted out or complained
     // Handler: pauseAll, updateTerminalState
     spam: {
-      events: ['unsubscribed', 'complaint'],
-      description: 'Lead marked as spam or unsubscribed - STOP all future mails',
-      actions: ['pauseAllFutureMails', 'updateLeadTerminalState', 'addToTerminalPage'],
+      events: ["unsubscribed", "complaint"],
+      description:
+        "Lead marked as spam or unsubscribed - STOP all future mails",
+      actions: [
+        "pauseAllFutureMails",
+        "updateLeadTerminalState",
+        "addToTerminalPage",
+      ],
       allowManualRetry: true,
-      requiresConfirmation: true
+      requiresConfirmation: true,
     },
-    
+
     // FAILED EVENTS: Delivery failed - manual retry only
     // Handler: pauseAll, addToFailedOutreach
     failed: {
-      events: ['hard_bounce', 'blocked', 'error', 'invalid'],
-      description: 'Hard failures - pause all, manual retry only',
-      actions: ['pauseAllScheduling', 'addToFailedOutreach'],
+      events: ["hard_bounce", "blocked", "error", "invalid"],
+      description: "Hard failures - pause all, manual retry only",
+      actions: ["pauseAllScheduling", "addToFailedOutreach"],
       autoRetry: false,
       allowManualRetry: true,
-      onMaxRetriesExceeded: 'markAsDead'
-    }
+      onMaxRetriesExceeded: "markAsDead",
+    },
   },
-  
+
   // ============================================================
   // SECTION 11: DEAD MAIL RULES
   // Configuration for handling leads that exceed retry limits
@@ -832,29 +1000,30 @@ const DEFAULT_RULEBOOK = {
     // When to mark a lead as dead
     triggerConditions: {
       maxRetriesExceeded: true,
-      applyToCategories: ['autoReschedule', 'failed']
+      applyToCategories: ["autoReschedule", "failed"],
     },
-    
+
     // Actions when lead is marked dead
     actions: {
-      updateLeadStatus: 'dead',
-      setTerminalState: 'dead',
+      updateLeadStatus: "dead",
+      setTerminalState: "dead",
       cancelAllPendingJobs: true,
       createEventHistory: true,
       createNotification: true,
-      notificationType: 'warning',
-      notificationMessage: 'Lead marked as dead after exceeding max retry limit'
+      notificationType: "warning",
+      notificationMessage:
+        "Lead marked as dead after exceeding max retry limit",
     },
-    
+
     // Resurrection (allow retry after fixing issue)
     resurrection: {
       enabled: true,
       resetRetryCount: true,
       clearTerminalState: true,
-      requiresUserConfirmation: true
-    }
+      requiresUserConfirmation: true,
+    },
   },
-  
+
   // ============================================================
   // SECTION 12: ACTION IMPACT MAPS
   // Defines what each action affects in the system
@@ -864,167 +1033,169 @@ const DEFAULT_RULEBOOK = {
   actionImpacts: {
     // CANCEL JOB - Manual (user clicks cancel)
     cancelJobManual: {
-      description: 'User manually cancels a pending job',
-      jobStatusChange: 'cancelled',
+      description: "User manually cancels a pending job",
+      jobStatusChange: "cancelled",
       removeFromQueue: true,
-      updateLeadStatus: true,  // MUST look for next scheduled job
+      updateLeadStatus: true, // MUST look for next scheduled job
       createEventHistory: true,
-      eventType: 'job_cancelled_manual',
-      leadStatusFallback: 'idle',  // If no other jobs found
-      lookForNextScheduledJob: true
+      eventType: "job_cancelled_manual",
+      leadStatusFallback: "idle", // If no other jobs found
+      lookForNextScheduledJob: true,
     },
-    
+
     // CANCEL JOB - Dynamic (system cancels due to priority)
     cancelJobDynamic: {
-      description: 'System cancels job due to higher priority job being scheduled',
-      jobStatusChange: 'cancelled',
+      description:
+        "System cancels job due to higher priority job being scheduled",
+      jobStatusChange: "cancelled",
       removeFromQueue: true,
-      updateLeadStatus: false,  // Higher priority job will handle status
+      updateLeadStatus: false, // Higher priority job will handle status
       createEventHistory: true,
-      eventType: 'job_cancelled_priority',
+      eventType: "job_cancelled_priority",
       preserveHigherPriorityStatus: true,
-      lookForNextScheduledJob: false
+      lookForNextScheduledJob: false,
     },
-    
+
     // SKIP JOB
     skipJob: {
-      description: 'User skips a followup in the sequence',
-      jobStatusChange: 'skipped',
+      description: "User skips a followup in the sequence",
+      jobStatusChange: "skipped",
       removeFromQueue: true,
       updateLeadStatus: true,
       createEventHistory: true,
-      eventType: 'job_skipped',
-      scheduleNextFollowup: true,  // Schedule the next step in sequence
-      leadStatusFallback: 'idle',
-      lookForNextScheduledJob: true
+      eventType: "job_skipped",
+      scheduleNextFollowup: true, // Schedule the next step in sequence
+      leadStatusFallback: "idle",
+      lookForNextScheduledJob: true,
     },
-    
+
     // PAUSE FOLLOWUPS
     pauseFollowups: {
-      description: 'User pauses all followups for a lead',
-      jobStatusChange: 'cancelled',  // Cancel the pending followup jobs
-      affectedTypes: ['followup'],  // Only affects followup-type jobs
-      excludeTypes: ['conditional', 'manual', 'initial'],  // Don't touch these
+      description: "User pauses all followups for a lead",
+      jobStatusChange: "cancelled", // Cancel the pending followup jobs
+      affectedTypes: ["followup"], // Only affects followup-type jobs
+      excludeTypes: ["conditional", "manual", "initial"], // Don't touch these
       removeFromQueue: true,
       updateLeadStatus: true,
       createEventHistory: true,
-      eventType: 'followups_paused',
-      setLeadFlag: 'followupsPaused',
-      leadStatusFallback: 'idle',
-      lookForNextScheduledJob: true  // Check for conditional/manual to show
+      eventType: "followups_paused",
+      setLeadFlag: "followupsPaused",
+      leadStatusFallback: "idle",
+      lookForNextScheduledJob: true, // Check for conditional/manual to show
     },
-    
+
     // RESUME FOLLOWUPS
     resumeFollowups: {
-      description: 'User resumes followups for a lead',
+      description: "User resumes followups for a lead",
       removeFromQueue: false,
       updateLeadStatus: true,
       createEventHistory: true,
-      eventType: 'followups_resumed',
-      clearLeadFlag: 'followupsPaused',
+      eventType: "followups_resumed",
+      clearLeadFlag: "followupsPaused",
       scheduleNextFollowup: true,
-      checkForBlockingJobs: true,  // Don't schedule if manual/conditional exists
-      blockingJobTypes: ['manual', 'conditional'],
-      lookForNextScheduledJob: true
+      checkForBlockingJobs: true, // Don't schedule if manual/conditional exists
+      blockingJobTypes: ["manual", "conditional"],
+      lookForNextScheduledJob: true,
     },
-    
+
     // RETRY JOB
     retryJob: {
-      description: 'User retries a failed job',
-      oldJobStatusChange: 'rescheduled',  // Mark old job as rescheduled
+      description: "User retries a failed job",
+      oldJobStatusChange: "rescheduled", // Mark old job as rescheduled
       createNewJob: true,
       incrementRetryCount: true,
-      removeFromQueue: false,  // Old job already removed from queue
+      removeFromQueue: false, // Old job already removed from queue
       updateLeadStatus: true,
       createEventHistory: true,
-      eventType: 'job_retried',
+      eventType: "job_retried",
       checkMaxRetries: true,
-      maxRetries: 3
+      maxRetries: 3,
     },
-    
+
     // RESCHEDULE JOB
     rescheduleJob: {
-      description: 'User or system reschedules a job to new time',
-      oldJobStatusChange: 'rescheduled',
+      description: "User or system reschedules a job to new time",
+      oldJobStatusChange: "rescheduled",
       createNewJob: true,
       removeFromQueue: true,
       updateLeadStatus: true,
       createEventHistory: true,
-      eventType: 'job_rescheduled'
+      eventType: "job_rescheduled",
     },
-    
+
     // FREEZE LEAD
     freezeLead: {
-      description: 'User freezes a lead temporarily',
+      description: "User freezes a lead temporarily",
       cancelAllPendingJobs: true,
       removeFromQueue: true,
       updateLeadStatus: true,
       createEventHistory: true,
-      eventType: 'lead_frozen',
-      forcedLeadStatus: 'frozen',
-      setLeadFlag: 'frozenUntil'
+      eventType: "lead_frozen",
+      forcedLeadStatus: "frozen",
+      setLeadFlag: "frozenUntil",
     },
-    
+
     // UNFREEZE LEAD
     unfreezeLead: {
-      description: 'User unfreezes a lead or freeze expires',
+      description: "User unfreezes a lead or freeze expires",
       updateLeadStatus: true,
       createEventHistory: true,
-      eventType: 'lead_unfrozen',
-      clearLeadFlag: 'frozenUntil',
+      eventType: "lead_unfrozen",
+      clearLeadFlag: "frozenUntil",
       scheduleNextFollowup: true,
-      leadStatusFallback: 'idle',
-      lookForNextScheduledJob: true
+      leadStatusFallback: "idle",
+      lookForNextScheduledJob: true,
     },
-    
+
     // CONVERT LEAD
     convertLead: {
-      description: 'User marks lead as converted/won',
+      description: "User marks lead as converted/won",
       cancelAllPendingJobs: true,
       removeFromQueue: true,
       updateLeadStatus: true,
       createEventHistory: true,
-      eventType: 'lead_converted',
-      forcedLeadStatus: 'converted',
-      preventFutureScheduling: true
+      eventType: "lead_converted",
+      forcedLeadStatus: "converted",
+      preventFutureScheduling: true,
     },
-    
+
     // SCHEDULE CONDITIONAL EMAIL
     // Complete flow for scheduling a conditional email when triggered
     scheduleConditionalEmail: {
-      description: 'System schedules a conditional email after trigger event (opened/clicked)',
-      
+      description:
+        "System schedules a conditional email after trigger event (opened/clicked)",
+
       // STEP 1: Check for existing scheduled jobs
       checkForExistingJobs: true,
-      existingJobTypes: ['followup', 'manual'],  // Types to check/pause
-      
+      existingJobTypes: ["followup", "manual"], // Types to check/pause
+
       // STEP 2: If pending job exists, pause it and remove from queue
       pausePendingJobs: true,
-      updatePausedJobStatus: 'paused',  // Status for paused jobs
+      updatePausedJobStatus: "paused", // Status for paused jobs
       removeFromQueue: true,
       createPauseEventHistory: true,
-      
+
       // STEP 3: Schedule the conditional email
       createConditionalJob: true,
-      conditionalJobStatus: 'scheduled',  // NOT 'pending' - use 'scheduled'
+      conditionalJobStatus: "scheduled", // NOT 'pending' - use 'scheduled'
       addToBullmqQueue: true,
-      
+
       // STEP 4: Update lead status with trigger format
       updateLeadStatus: true,
-      leadStatusFormat: 'condition {triggerEvent}:{status}',  // e.g., 'condition opened:scheduled'
-      
+      leadStatusFormat: "condition {triggerEvent}:{status}", // e.g., 'condition opened:scheduled'
+
       // STEP 5: Create event history
       createEventHistory: true,
-      eventType: 'conditional_scheduled',
-      
+      eventType: "conditional_scheduled",
+
       // STEP 6: Update emailSchedule (Sequence Progress)
       updateEmailSchedule: true,
-      
+
       // Error handling
-      rollbackOnFailure: true
-    }
+      rollbackOnFailure: true,
+    },
   },
-  
+
   // ============================================================
   // SECTION 11: RETRY RULES
   // Comprehensive retry configuration for different failure types
@@ -1034,81 +1205,93 @@ const DEFAULT_RULEBOOK = {
     // Used for soft_bounce and deferred statuses
     autoRetry: {
       enabled: true,
-      maxAutoRetries: 3,  // Maximum auto-retry attempts
-      
+      maxAutoRetries: 3, // Maximum auto-retry attempts
+
       // Exponential backoff configuration
       backoff: {
-        type: 'exponential',  // 'fixed' or 'exponential'
-        initialDelayMinutes: 30,  // First retry after 30 mins
-        multiplier: 2,  // Double delay each retry
-        maxDelayHours: 24,  // Cap at 24 hours between retries
+        type: "exponential", // 'fixed' or 'exponential'
+        initialDelayMinutes: 30, // First retry after 30 mins
+        multiplier: 2, // Double delay each retry
+        maxDelayHours: 24, // Cap at 24 hours between retries
       },
-      
+
       // Statuses that trigger auto-retry
-      triggerStatuses: ['soft_bounce', 'deferred'],
-      
+      triggerStatuses: ["soft_bounce", "deferred"],
+
       // Actions on auto-retry
       onRetry: {
         incrementRetryCount: true,
         createEventHistory: true,
-        eventType: 'auto_retry',
-        updateJobStatus: 'rescheduled',
-        updateLeadStatus: false  // Don't change lead status on auto-retry
+        eventType: "auto_retry",
+        updateJobStatus: "rescheduled",
+        updateLeadStatus: false, // Don't change lead status on auto-retry
       },
-      
+
       // Escalation when max retries exceeded
       onMaxRetriesExceeded: {
-        updateJobStatus: 'failed',
+        updateJobStatus: "failed",
         updateLeadStatus: true,
         createEventHistory: true,
         createNotification: true,
-        notificationType: 'warning',
-        notificationMessage: 'Email failed after maximum auto-retry attempts'
-      }
+        notificationType: "warning",
+        notificationMessage: "Email failed after maximum auto-retry attempts",
+      },
     },
-    
+
     // MANUAL RETRY CONFIGURATION
     // Used for hard_bounce, blocked, error, invalid, complaint, unsubscribed
     manualRetry: {
       enabled: true,
-      maxManualRetries: 5,  // User can retry up to 5 times
-      
+      maxManualRetries: 5, // User can retry up to 5 times
+
       // Statuses that allow manual retry
-      allowedStatuses: ['hard_bounce', 'blocked', 'error', 'failed', 'cancelled', 'spam', 'complaint', 'unsubscribed'],
-      
+      allowedStatuses: [
+        "hard_bounce",
+        "blocked",
+        "error",
+        "failed",
+        "cancelled",
+        "spam",
+        "complaint",
+        "unsubscribed",
+      ],
+
       // Statuses that CANNOT be retried even manually
-      forbiddenStatuses: ['invalid', 'skipped'],
-      
+      forbiddenStatuses: ["invalid", "skipped"],
+
       // Actions on manual retry
       onRetry: {
         incrementRetryCount: true,
         createEventHistory: true,
-        eventType: 'manual_retry',
+        eventType: "manual_retry",
         updateLeadStatus: true,
-        checkForConflicts: true  // Check for existing scheduled jobs
-      }
+        checkForConflicts: true, // Check for existing scheduled jobs
+      },
     },
-    
+
     // CONFLICT RESOLUTION
     // What happens when retry conflicts with existing scheduled job
     conflictResolution: {
       // Priority comparison
       compareByPriority: true,
-      
+
       // If retry has LOWER priority than existing job
-      lowerPriorityAction: 'block',  // 'block' | 'queue_after' | 'cancel_existing'
-      lowerPriorityMessage: 'Cannot retry: A higher priority {existingType} is already scheduled',
-      
-      // If retry has HIGHER priority than existing job  
-      higherPriorityAction: 'prompt',  // 'prompt' | 'auto_cancel' | 'block'
-      higherPriorityMessage: 'A {existingType} is scheduled. Cancel it to retry this email?',
-      
+      lowerPriorityAction: "block", // 'block' | 'queue_after' | 'cancel_existing'
+      lowerPriorityMessage:
+        "Cannot retry: A higher priority {existingType} is already scheduled",
+
+      // If retry has HIGHER priority than existing job
+      higherPriorityAction: "prompt", // 'prompt' | 'auto_cancel' | 'block'
+      higherPriorityMessage:
+        "A {existingType} is scheduled. Cancel it to retry this email?",
+
       // If retry has SAME priority
-      samePriorityAction: 'block',
-      samePriorityMessage: 'Cannot retry: A {existingType} of same priority is already scheduled'
-    }
+      samePriorityAction: "block",
+      samePriorityMessage:
+        "Cannot retry: A {existingType} of same priority is already scheduled",
+    },
   },
-  
+
   // ============================================================
   // SECTION 12: QUEUE WATCHER RULES
   // Prevents duplicate scheduling and ensures queue integrity
@@ -1117,57 +1300,63 @@ const DEFAULT_RULEBOOK = {
     // DUPLICATE PREVENTION
     duplicatePrevention: {
       enabled: true,
-      
+
       // Rule: Same lead cannot have multiple active jobs
       maxActiveJobsPerLead: 1,
-      
+
       // What counts as "active" for duplicate checking
-      activeStatuses: ['pending', 'queued', 'scheduled', 'rescheduled', 'deferred'],
-      
+      activeStatuses: [
+        "pending",
+        "queued",
+        "scheduled",
+        "rescheduled",
+        "deferred",
+      ],
+
       // What to do when duplicate detected
-      onDuplicateDetected: 'block',  // 'block' | 'queue_later' | 'cancel_older'
-      
+      onDuplicateDetected: "block", // 'block' | 'queue_later' | 'cancel_older'
+
       // Exception: Paused jobs don't count as active
-      excludeStatuses: ['paused', 'cancelled', 'skipped']
+      excludeStatuses: ["paused", "cancelled", "skipped"],
     },
-    
+
     // PRIORITY SCHEDULING
     priorityScheduling: {
       enabled: true,
-      
+
       // Mail type priorities (higher = more important)
       priorities: {
         conditional: 100,
         manual: 90,
         initial: 80,
-        followup: 70
+        followup: 70,
       },
-      
+
       // Higher priority can pause lower priority
       canPauseLowerPriority: true,
-      pauseOnSchedule: true,  // Automatically pause when higher priority scheduled
-      resumeOnComplete: true  // Resume paused jobs when higher priority completes/cancels
+      pauseOnSchedule: true, // Automatically pause when higher priority scheduled
+      resumeOnComplete: true, // Resume paused jobs when higher priority completes/cancels
     },
-    
+
     // INTEGRITY CHECKS
     integrityChecks: {
       enabled: true,
-      checkInterval: 60000,  // Check every minute
-      
+      checkInterval: 60000, // Check every minute
+
       // Check for orphaned jobs (no lead exists)
       detectOrphanedJobs: true,
-      orphanAction: 'cancel',
-      
+      orphanAction: "cancel",
+
       // Check for stuck jobs (pending too long)
       detectStuckJobs: true,
       stuckThresholdHours: 48,
-      stuckAction: 'notify',
-      
+      stuckAction: "notify",
+
       // Check for invalid state combinations
-      validateStatusTransitions: true
-    }
+      validateStatusTransitions: true,
+    },
   },
-  
+
   // ============================================================
   // SECTION 13: FOLLOWUP-SPECIFIC RULES
   // Special rules for followup mail behavior (pause/resume/skip)
@@ -1177,84 +1366,84 @@ const DEFAULT_RULEBOOK = {
     pause: {
       // What pause does
       updateJobStatus: true,
-      jobStatusValue: 'paused',
-      
+      jobStatusValue: "paused",
+
       // CRITICAL: Pause does NOT update lead status
       updateLeadStatus: false,
-      
+
       // Only affects followup jobs
-      affectedTypes: ['followup'],
-      excludedTypes: ['initial', 'manual', 'conditional'],
-      
+      affectedTypes: ["followup"],
+      excludedTypes: ["initial", "manual", "conditional"],
+
       // History
       createEventHistory: true,
-      eventType: 'followups_paused',
-      
+      eventType: "followups_paused",
+
       // Lead flag
-      setLeadFlag: { key: 'followupsPaused', value: true }
+      setLeadFlag: { key: "followupsPaused", value: true },
     },
-    
+
     // RESUME BEHAVIOR
     resume: {
       // What resume does
-      deleteOldPausedJobs: true,  // Remove the old paused job
-      scheduleNextFollowup: true,  // Create fresh job for next followup
-      
+      deleteOldPausedJobs: true, // Remove the old paused job
+      scheduleNextFollowup: true, // Create fresh job for next followup
+
       // CRITICAL: Resume does NOT update lead status directly
       // Status is updated when new job is scheduled
       updateLeadStatus: false,
-      
+
       // Check for blocking jobs before resume
       checkForBlockingJobs: true,
-      blockingTypes: ['manual', 'conditional'],
-      onBlockingJobExists: 'skip',  // Don't schedule if manual/conditional exists
-      
+      blockingTypes: ["manual", "conditional"],
+      onBlockingJobExists: "skip", // Don't schedule if manual/conditional exists
+
       // History
       createEventHistory: true,
-      eventType: 'followups_resumed',
-      
+      eventType: "followups_resumed",
+
       // Clear flag
-      clearLeadFlag: 'followupsPaused'
+      clearLeadFlag: "followupsPaused",
     },
-    
+
     // SKIP BEHAVIOR
     skip: {
       // What skip does
       updateJobStatus: true,
-      jobStatusValue: 'skipped',
-      
+      jobStatusValue: "skipped",
+
       // Schedule next followup in sequence
       scheduleNextFollowup: true,
-      
+
       // If no next followup exists
       onNoNextFollowup: {
         updateLeadStatus: true,
-        leadStatusValue: 'idle'
+        leadStatusValue: "idle",
       },
-      
+
       // History
       createEventHistory: true,
-      eventType: 'followup_skipped',
-      
+      eventType: "followup_skipped",
+
       // Add to skipped list
-      addToSkippedList: true
+      addToSkippedList: true,
     },
-    
+
     // REVERT SKIP BEHAVIOR
     revertSkip: {
       // What revert does
       removeFromSkippedList: true,
       scheduleSkippedFollowup: true,
-      
+
       // Check for blocking jobs
       checkForBlockingJobs: true,
-      blockingTypes: ['manual', 'conditional'],
-      
+      blockingTypes: ["manual", "conditional"],
+
       // History
       createEventHistory: true,
-      eventType: 'skip_reverted'
-    }
-  }
+      eventType: "skip_reverted",
+    },
+  },
 };
 
 // ========================================

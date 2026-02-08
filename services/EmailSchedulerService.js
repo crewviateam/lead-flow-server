@@ -1017,12 +1017,15 @@ class EmailSchedulerService {
 
       // Determine category from type name for efficient analytics queries
       // Categories: 'initial', 'followup', 'manual', 'conditional'
-      let category = 'followup'; // default for sequence emails
+      let category = "followup"; // default for sequence emails
       const typeLower = type.toLowerCase();
-      if (typeLower.includes('initial')) {
-        category = 'initial';
-      } else if (typeLower.startsWith('conditional:') || typeLower.startsWith('conditional ')) {
-        category = 'conditional';
+      if (typeLower.includes("initial")) {
+        category = "initial";
+      } else if (
+        typeLower.startsWith("conditional:") ||
+        typeLower.startsWith("conditional ")
+      ) {
+        category = "conditional";
       }
       // Note: 'manual' category is set by scheduleManualSlot, not here
 
@@ -1124,6 +1127,26 @@ class EmailSchedulerService {
         leadId: lead.id.toString(),
         type,
         scheduledFor: finalScheduleTime,
+      });
+
+      // Create eventHistory entry for activity log
+      // This logs both initial scheduling and rescheduling events
+      await prisma.eventHistory.create({
+        data: {
+          leadId: parseInt(lead.id),
+          event: customStatus === "rescheduled" ? "rescheduled" : "scheduled",
+          timestamp: new Date(),
+          details: {
+            scheduledFor: finalScheduleTime,
+            timezone: lead.timezone,
+            localTime: moment(finalScheduleTime)
+              .tz(lead.timezone)
+              .format("YYYY-MM-DD HH:mm:ss z"),
+            retryCount: retryCount,
+          },
+          emailType: type,
+          emailJobId: emailJob.id,
+        },
       });
 
       console.log(

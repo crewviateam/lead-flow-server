@@ -123,7 +123,7 @@ router.get('/fcm/status', async (req, res) => {
     const fcmService = NotificationService.fcmService;
     const isReady = fcmService?.isReady() || false;
     const tokens = await prisma.deviceToken.findMany({
-      select: { platform: true, createdAt: true }
+      select: { platform: true, createdAt: true, token: true }
     });
     
     res.json({
@@ -131,7 +131,8 @@ router.get('/fcm/status', async (req, res) => {
       registeredDevices: tokens.length,
       devices: tokens.map(t => ({
         platform: t.platform,
-        registeredAt: t.createdAt
+        registeredAt: t.createdAt,
+        token: t.token
       }))
     });
   } catch (error) {

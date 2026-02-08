@@ -172,33 +172,39 @@ class FCMService {
       // Prepare message
       const message = {
         notification: {
-          title: notification.title || 'Lead Email System',
-          body: notification.body || notification.message
+          title: notification.title || "Lead Email System",
+          body: notification.body || notification.message,
         },
         data: {
-          type: notification.type || 'info',
-          ...(notification.data || {})
+          type: notification.type || "info",
+          title: notification.title || "Lead Email System",
+          body: notification.body || notification.message,
+          ...(notification.data || {}),
         },
         webpush: {
           notification: {
-            icon: '/logo192.png',
-            badge: '/logo192.png',
-            tag: notification.tag || 'lead-email-notification',
-            requireInteraction: notification.type === 'achievement' || notification.type === 'error'
+            icon: "/logo192.png",
+            badge: "/logo192.png",
+            tag: notification.tag || "lead-email-notification",
+            requireInteraction:
+              notification.type === "achievement" ||
+              notification.type === "error",
           },
           fcmOptions: {
-            link: notification.link || '/'
-          }
-        }
+            link: notification.link || "/",
+          },
+        },
       };
 
       // Send to all devices
       const response = await admin.messaging().sendEachForMulticast({
         tokens: tokenList,
-        ...message
+        ...message,
       });
 
-      console.log(`[FCM] Sent to ${response.successCount}/${tokenList.length} devices`);
+      console.log(
+        `[FCM] Sent to ${response.successCount}/${tokenList.length} devices`,
+      );
 
       // Clean up invalid tokens
       if (response.failureCount > 0) {
@@ -206,8 +212,19 @@ class FCMService {
         response.responses.forEach((resp, idx) => {
           if (!resp.success) {
             const errorCode = resp.error?.code;
-            if (errorCode === 'messaging/invalid-registration-token' ||
-                errorCode === 'messaging/registration-token-not-registered') {
+            const errorMessage = resp.error?.message;
+
+            // Log detailed error for debugging
+            console.error(`[FCM] Token ${idx} failed:`, {
+              errorCode,
+              errorMessage,
+              tokenPrefix: tokenList[idx]?.substring(0, 30) + "...",
+            });
+
+            if (
+              errorCode === "messaging/invalid-registration-token" ||
+              errorCode === "messaging/registration-token-not-registered"
+            ) {
               failedTokens.push(tokenList[idx]);
             }
           }

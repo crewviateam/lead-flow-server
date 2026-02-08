@@ -296,7 +296,7 @@ class EmailJobController {
         oldJob.type,
         newScheduledFor, // Target time (calculated with SmartDelay)
         schedulerSettings,
-        "pending",
+        "rescheduled", // Use 'rescheduled' status to differentiate from original 'pending' jobs
         newRetryCount, // Properly incremented retry count
         oldJob.templateId,
         null, // condition
